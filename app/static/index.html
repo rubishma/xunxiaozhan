@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>巡小站 · 手动巡检</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f3f6fa; color: #192c40; font: 16px/1.6 system-ui, sans-serif; }
+    main { max-width: 820px; margin: 48px auto; padding: 0 20px; }
+    h1 { margin-bottom: 4px; } h2 { font-size: 20px; }
+    .muted { color: #526479; }
+    .card { background: white; border: 1px solid #dce4ed; border-radius: 16px; padding: 24px; margin-top: 24px; }
+    .tag { display: inline-block; background: #e9eef5; padding: 4px 12px; border-radius: 20px; font-weight: 600; }
+    .tag.up { background: #dff5e8; color: #145b32; }
+    .tag.down { background: #ffe5e5; color: #922c2c; }
+    code { overflow-wrap: anywhere; }
+    button { background: #235bc1; color: white; border: 0; border-radius: 8px; padding: 12px 20px; font: inherit; cursor: pointer; }
+    button:disabled { opacity: .65; cursor: wait; }
+    button:focus-visible { outline: 3px solid #192c40; outline-offset: 3px; }
+    dl { display: grid; grid-template-columns: 120px 1fr; gap: 12px; }
+    dt { color: #526479; } dd { margin: 0; overflow-wrap: anywhere; }
+    #notice { color: #922c2c; }
+    @media (max-width: 480px) {
+      main { margin-top: 24px; } .card { padding: 18px; }
+      dl { grid-template-columns: 1fr; gap: 4px; } dd { margin-bottom: 12px; }
+      button { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="muted">学习版本 · 单目标手动检查</p>
+    <h1>巡小站</h1>
+    <p class="muted">检查一次，读懂一次结果。</p>
+  </header>
+  <section class="card" aria-labelledby="target-title">
+    <h2 id="target-title">本机测试网站</h2>
+    <p><code>http://127.0.0.1:8765/</code></p>
+    <p class="muted">请求总时限 10 秒。页面刷新后清空结果，暂不保存历史。</p>
+    <button id="check" type="button">立即检查</button>
+    <p id="notice" role="alert" hidden></p>
+  </section>
+  <section class="card" aria-labelledby="result-title" aria-live="polite" aria-busy="false" id="result">
+    <h2 id="result-title">最近一次结果</h2>
+    <span id="status" class="tag">尚未检查</span>
+    <dl>
+      <dt>HTTP 状态码</dt><dd id="code">—</dd>
+      <dt>请求耗时</dt><dd id="duration">—</dd>
+      <dt>检查开始时间</dt><dd id="time">—</dd>
+      <dt>错误原因</dt><dd id="error">点击“立即检查”获取真实结果。</dd>
+    </dl>
+  </section>
+  <p class="muted">成功以最终 HTTP 200–299 为准，不代表网站所有业务都正常。</p>
+</main>
+<script>
+  const button = document.querySelector("#check");
+  const notice = document.querySelector("#notice");
+  const result = document.querySelector("#result");
+
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    button.textContent = "正在检查…";
+    result.setAttribute("aria-busy", "true");
+    notice.hidden = true;
+    try {
+      const response = await fetch("/api/check", {
+        method: "POST",
+        signal: AbortSignal.timeout(15000)
+      });
+      if (!response.ok) {
+        const detail = await response.json();
+        throw new Error(detail.detail || "巡检接口暂时不可用");
+      }
+      const data = await response.json();
+      const status = document.querySelector("#status");
+      status.textContent = data.status === "up" ? "正常" : "异常";
+      status.className = "tag " + data.status;
+      document.querySelector("#code").textContent = data.status_code ?? "未收到 HTTP 响应";
+      document.querySelector("#duration").textContent = data.response_ms + " ms";
+      document.querySelector("#time").textContent = new Intl.DateTimeFormat("zh-CN", {
+        timeZone: "Asia/Shanghai", dateStyle: "short", timeStyle: "medium", hour12: false
+      }).format(new Date(data.checked_at)) + "（北京时间）";
+      document.querySelector("#error").textContent = data.error || "无";
+    } catch (error) {
+      notice.textContent = "本次操作未完成，下面保留上次结果。请确认巡小站后端仍在运行。详情：" + error.message;
+      notice.hidden = false;
+    } finally {
+      button.disabled = false;
+      button.textContent = "立即检查";
+      result.setAttribute("aria-busy", "false");
+    }
+  });
+</script>
+</body>
+</html>
