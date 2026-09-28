@@ -14,6 +14,7 @@
     .tag { display: inline-block; background: #e9eef5; padding: 4px 12px; border-radius: 20px; font-weight: 600; }
     .tag.up { background: #dff5e8; color: #145b32; }
     .tag.down { background: #ffe5e5; color: #922c2c; }
+    .tag.paused { background: #fff0c8; color: #6c4a00; }
     code { overflow-wrap: anywhere; }
     label { display: block; margin-top: 16px; font-weight: 600; }
     input { width: 100%; font: inherit; padding: 10px; border: 1px solid #8495a7; border-radius: 8px; }
@@ -40,6 +41,7 @@
   </header>
   <section class="card" aria-labelledby="target-title">
     <h2 id="target-title">目标配置</h2>
+    <span id="mode" class="tag">读取状态中</span>
     <form id="target-form">
       <label for="name">目标名称</label>
       <input id="name" name="name" maxlength="80" required disabled>
@@ -49,6 +51,7 @@
       <div class="actions">
         <button id="save" type="submit" disabled>保存配置</button>
         <button id="check" type="button" disabled>立即检查</button>
+        <button id="pause" type="button" disabled>暂停巡检</button>
       </div>
     </form>
     <p id="hint" class="muted" role="status">正在读取已保存的配置…</p>
@@ -74,6 +77,8 @@
   const urlInput = document.querySelector("#url");
   const saveButton = document.querySelector("#save");
   const checkButton = document.querySelector("#check");
+  const pauseButton = document.querySelector("#pause");
+  const mode = document.querySelector("#mode");
   const notice = document.querySelector("#notice");
   const hint = document.querySelector("#hint");
   const result = document.querySelector("#result");
@@ -86,9 +91,17 @@
     );
     nameInput.disabled = urlInput.disabled = busy || !savedTarget;
     saveButton.disabled = busy || !savedTarget || !dirty;
-    checkButton.disabled = busy || !savedTarget || dirty;
+    checkButton.disabled = busy || !savedTarget || dirty || savedTarget.paused;
+    pauseButton.disabled = busy || !savedTarget || dirty;
+    if (savedTarget) {
+      mode.textContent = savedTarget.paused ? "已暂停" : "允许检查";
+      mode.className = savedTarget.paused ? "tag paused" : "tag";
+      pauseButton.textContent = savedTarget.paused ? "恢复巡检" : "暂停巡检";
+    }
     if (!busy && savedTarget) {
-      hint.textContent = dirty ? "有未保存的修改，请先保存配置。" : "当前配置已保存，可以检查。";
+      hint.textContent = dirty ? "有未保存的修改，请先保存配置。" :
+        savedTarget.paused ? "已暂停，不会发起检查。下方若有结果，仅代表之前那一次检查。" :
+        "当前配置已保存，可以检查。恢复巡检后请手动检查，确认目标状态。";
     }
   }
 
@@ -157,6 +170,26 @@
     } finally {
       busy = false;
       saveButton.textContent = "保存配置";
+      syncButtons();
+    }
+  });
+
+  pauseButton.addEventListener("click", async () => {
+    if (busy || pauseButton.disabled) return;
+    const nextPaused = !savedTarget.paused;
+    busy = true;
+    syncButtons();
+    notice.hidden = true;
+    hint.textContent = nextPaused ? "正在暂停巡检…" : "正在恢复巡检…";
+    try {
+      savedTarget = await api("/api/target/state", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paused: nextPaused })
+      });
+    } catch (error) {
+      showError(error);
+    } finally {
+      busy = false;
       syncButtons();
     }
   });

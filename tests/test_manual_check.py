@@ -6,6 +6,7 @@ import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
@@ -16,8 +17,12 @@ from app import database, main
 
 class Target(BaseHTTPRequestHandler):
     entered = threading.Event()
+    request_count = 0
+    count_lock = threading.Lock()
 
     def do_GET(self):
+        with Target.count_lock:
+            Target.request_count += 1
         if self.path == "/slow":
             self.entered.set()
             time.sleep(0.4)
@@ -121,6 +126,9 @@ class ManualCheckTests(unittest.TestCase):
             self.assertEqual(client.post("/api/check").status_code, 409)
             edit = client.put("/api/target", json={"name": "不能中途改", "url": self.base + "/"})
             self.assertEqual(edit.status_code, 409)
+            pause = client.patch("/api/target/state", json={"paused": True})
+            self.assertEqual(pause.status_code, 409)
+            self.assertFalse(client.get("/api/target").json()["paused"])
             self.assertEqual(client.get("/api/health").status_code, 200)
             self.assertEqual(first.result(timeout=3).json()["status"], "up")
             self.assertEqual(client.get("/api/target").json()["url"], self.base + "/slow")
@@ -164,6 +172,59 @@ class ManualCheckTests(unittest.TestCase):
             self.assertEqual(response.status_code, 503)
             self.assertIn("数据库", response.json()["detail"])
             self.assertEqual(client.get("/api/target").json(), before)
+
+
+    def test_pause_blocks_network_persists_and_resume_requires_manual_check(self):
+        with TestClient(main.app) as client:
+            self.save(client, self.base + "/")
+            before = Target.request_count
+            response = client.patch("/api/target/state", json={"paused": True})
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json()["paused"])
+            blocked = client.post("/api/check")
+            self.assertEqual(blocked.status_code, 409)
+            self.assertIn("已暂停", blocked.json()["detail"])
+            # 暂停时编辑名称不应意外恢复巡检。
+            self.assertTrue(self.save(client, self.base + "/", "暂停中修改")["paused"])
+            self.assertEqual(Target.request_count, before)
+        with TestClient(main.app) as restarted:
+            self.assertTrue(restarted.get("/api/target").json()["paused"])
+            self.assertEqual(restarted.post("/api/check").status_code, 409)
+            resumed = restarted.patch("/api/target/state", json={"paused": False})
+            self.assertEqual(resumed.status_code, 200)
+            self.assertFalse(resumed.json()["paused"])
+            # 恢复只是允许检查，本身不访问目标。
+            self.assertEqual(Target.request_count, before)
+            self.assertEqual(restarted.post("/api/check").json()["status"], "up")
+            self.assertEqual(Target.request_count, before + 1)
+
+    def test_old_database_upgrade_preserves_configuration(self):
+        database.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(database.DB_PATH)) as connection:
+            with connection:
+                connection.execute("CREATE TABLE targets (id INTEGER PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL)")
+                connection.execute(
+                    "INSERT INTO targets VALUES (1, ?, ?)", ("原来的练习站", self.base + "/bad")
+                )
+        with TestClient(main.app) as client:
+            target = client.get("/api/target").json()
+            self.assertEqual(target["name"], "原来的练习站")
+            self.assertEqual(target["url"], self.base + "/bad")
+            self.assertFalse(target["paused"])
+            client.patch("/api/target/state", json={"paused": True})
+        with TestClient(main.app) as restarted:
+            target = restarted.get("/api/target").json()
+            self.assertEqual(target["name"], "原来的练习站")
+            self.assertEqual(target["url"], self.base + "/bad")
+            self.assertTrue(target["paused"])
+
+    def test_pause_rejects_non_boolean_values_without_state_change(self):
+        with TestClient(main.app) as client:
+            for value in ["false", 0, 1, None]:
+                with self.subTest(value=value):
+                    response = client.patch("/api/target/state", json={"paused": value})
+                    self.assertEqual(response.status_code, 422)
+                    self.assertFalse(client.get("/api/target").json()["paused"])
 
 
 if __name__ == "__main__":

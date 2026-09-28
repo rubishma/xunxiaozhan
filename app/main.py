@@ -39,6 +39,11 @@ class TargetInput(BaseModel):
         return str(parsed)
 
 
+class PauseInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    paused: bool = Field(strict=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # SQLite 操作放到工作线程，不在事件循环里等待磁盘。
@@ -85,6 +90,15 @@ async def update_target(target: TargetInput):
         return await asyncio.to_thread(database.save_target, target.name, target.url)
 
 
+@app.patch("/api/target/state")
+async def update_pause(state: PauseInput):
+    # 与检查共用锁：正在执行的检查先完成，用户再暂停。
+    if app.state.check_lock.locked():
+        raise HTTPException(status_code=409, detail="检查或保存正在执行，请完成后再修改暂停状态")
+    async with app.state.check_lock:
+        return await asyncio.to_thread(database.set_paused, state.paused)
+
+
 @app.post("/api/check")
 async def check_target():
     if app.state.check_lock.locked():
@@ -92,6 +106,9 @@ async def check_target():
 
     async with app.state.check_lock:
         target = await asyncio.to_thread(database.get_target)
+        # 必须由后端拦截，不能只依赖页面把按钮变灰。
+        if target["paused"]:
+            raise HTTPException(status_code=409, detail="目标已暂停，请先恢复巡检")
         checked_at = datetime.now(timezone.utc).isoformat()
         started = perf_counter()
         status_code = None
