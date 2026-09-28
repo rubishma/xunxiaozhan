@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>巡小站 · 手动巡检</title>
+  <title>巡小站 · 目标配置</title>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; background: #f3f6fa; color: #192c40; font: 16px/1.6 system-ui, sans-serif; }
@@ -15,9 +15,12 @@
     .tag.up { background: #dff5e8; color: #145b32; }
     .tag.down { background: #ffe5e5; color: #922c2c; }
     code { overflow-wrap: anywhere; }
+    label { display: block; margin-top: 16px; font-weight: 600; }
+    input { width: 100%; font: inherit; padding: 10px; border: 1px solid #8495a7; border-radius: 8px; }
     button { background: #235bc1; color: white; border: 0; border-radius: 8px; padding: 12px 20px; font: inherit; cursor: pointer; }
-    button:disabled { opacity: .65; cursor: wait; }
-    button:focus-visible { outline: 3px solid #192c40; outline-offset: 3px; }
+    button:disabled { opacity: .65; cursor: not-allowed; }
+    button:focus-visible, input:focus-visible { outline: 3px solid #192c40; outline-offset: 3px; }
+    .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px; }
     dl { display: grid; grid-template-columns: 120px 1fr; gap: 12px; }
     dt { color: #526479; } dd { margin: 0; overflow-wrap: anywhere; }
     #notice { color: #922c2c; }
@@ -31,21 +34,32 @@
 <body>
 <main>
   <header>
-    <p class="muted">学习版本 · 单目标手动检查</p>
+    <p class="muted">学习版本 · 单目标配置与手动检查</p>
     <h1>巡小站</h1>
     <p class="muted">检查一次，读懂一次结果。</p>
   </header>
   <section class="card" aria-labelledby="target-title">
-    <h2 id="target-title">本机测试网站</h2>
-    <p><code>http://127.0.0.1:8765/</code></p>
-    <p class="muted">请求总时限 10 秒。页面刷新后清空结果，暂不保存历史。</p>
-    <button id="check" type="button">立即检查</button>
+    <h2 id="target-title">目标配置</h2>
+    <form id="target-form">
+      <label for="name">目标名称</label>
+      <input id="name" name="name" maxlength="80" required disabled>
+      <label for="url">HTTP/HTTPS 网址</label>
+      <input id="url" name="url" type="url" maxlength="2048" required disabled aria-describedby="url-help">
+      <p id="url-help" class="muted">只填写你有权检查的网站；网址不能包含账号、密码或 # 片段。</p>
+      <div class="actions">
+        <button id="save" type="submit" disabled>保存配置</button>
+        <button id="check" type="button" disabled>立即检查</button>
+      </div>
+    </form>
+    <p id="hint" class="muted" role="status">正在读取已保存的配置…</p>
     <p id="notice" role="alert" hidden></p>
+    <p class="muted">配置保存后重启仍保留。请求总时限 10 秒；检查结果暂不保存历史。</p>
   </section>
   <section class="card" aria-labelledby="result-title" aria-live="polite" aria-busy="false" id="result">
-    <h2 id="result-title">最近一次结果</h2>
+    <h2 id="result-title">本页最近一次结果</h2>
     <span id="status" class="tag">尚未检查</span>
     <dl>
+      <dt>实际检查网址</dt><dd id="checked-url">—</dd>
       <dt>HTTP 状态码</dt><dd id="code">—</dd>
       <dt>请求耗时</dt><dd id="duration">—</dd>
       <dt>检查开始时间</dt><dd id="time">—</dd>
@@ -55,28 +69,112 @@
   <p class="muted">成功以最终 HTTP 200–299 为准，不代表网站所有业务都正常。</p>
 </main>
 <script>
-  const button = document.querySelector("#check");
+  const form = document.querySelector("#target-form");
+  const nameInput = document.querySelector("#name");
+  const urlInput = document.querySelector("#url");
+  const saveButton = document.querySelector("#save");
+  const checkButton = document.querySelector("#check");
   const notice = document.querySelector("#notice");
+  const hint = document.querySelector("#hint");
   const result = document.querySelector("#result");
+  let savedTarget = null;
+  let busy = false;
 
-  button.addEventListener("click", async () => {
-    button.disabled = true;
-    button.textContent = "正在检查…";
+  function syncButtons() {
+    const dirty = savedTarget && (
+      nameInput.value !== savedTarget.name || urlInput.value !== savedTarget.url
+    );
+    nameInput.disabled = urlInput.disabled = busy || !savedTarget;
+    saveButton.disabled = busy || !savedTarget || !dirty;
+    checkButton.disabled = busy || !savedTarget || dirty;
+    if (!busy && savedTarget) {
+      hint.textContent = dirty ? "有未保存的修改，请先保存配置。" : "当前配置已保存，可以检查。";
+    }
+  }
+
+  function clearResult() {
+    document.querySelector("#status").textContent = "尚未检查";
+    document.querySelector("#status").className = "tag";
+    for (const id of ["checked-url", "code", "duration", "time"]) {
+      document.getElementById(id).textContent = "—";
+    }
+    document.querySelector("#error").textContent = "点击“立即检查”获取真实结果。";
+  }
+
+  function showError(error) {
+    notice.textContent = error.message;
+    notice.hidden = false;
+  }
+
+  async function api(path, options = {}) {
+    let response;
+    try {
+      response = await fetch(path, { ...options, cache: "no-store", signal: AbortSignal.timeout(15000) });
+    } catch {
+      throw new Error("无法连接巡小站或等待超时，请确认 8000 后端仍在运行，再重试或刷新页面。");
+    }
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      if (Array.isArray(data.detail)) {
+        throw new Error("保存失败：请填写 1–80 字名称，以及有效的 HTTP/HTTPS 网址，不含账号、密码或 # 片段。");
+      }
+      throw new Error(data.detail || "接口返回 HTTP " + response.status + "，请查看后端终端日志。");
+    }
+    return response.json();
+  }
+
+  async function loadTarget() {
+    try {
+      savedTarget = await api("/api/target");
+      nameInput.value = savedTarget.name;
+      urlInput.value = savedTarget.url;
+    } catch (error) {
+      hint.textContent = "配置读取失败，恢复后端后请刷新页面。";
+      showError(error);
+    }
+    syncButtons();
+  }
+
+  form.addEventListener("input", syncButtons);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (busy || !savedTarget) return;
+    busy = true;
+    syncButtons();
+    notice.hidden = true;
+    saveButton.textContent = "正在保存…";
+    hint.textContent = "正在把配置保存到后端…";
+    try {
+      savedTarget = await api("/api/target", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: nameInput.value, url: urlInput.value })
+      });
+      nameInput.value = savedTarget.name;
+      urlInput.value = savedTarget.url;
+      clearResult();
+    } catch (error) {
+      showError(error);
+    } finally {
+      busy = false;
+      saveButton.textContent = "保存配置";
+      syncButtons();
+    }
+  });
+
+  checkButton.addEventListener("click", async () => {
+    if (busy || checkButton.disabled) return;
+    busy = true;
+    syncButtons();
+    checkButton.textContent = "正在检查…";
+    hint.textContent = "正在检查后端已保存的目标…";
     result.setAttribute("aria-busy", "true");
     notice.hidden = true;
     try {
-      const response = await fetch("/api/check", {
-        method: "POST",
-        signal: AbortSignal.timeout(15000)
-      });
-      if (!response.ok) {
-        const detail = await response.json();
-        throw new Error(detail.detail || "巡检接口暂时不可用");
-      }
-      const data = await response.json();
+      const data = await api("/api/check", { method: "POST" });
       const status = document.querySelector("#status");
       status.textContent = data.status === "up" ? "正常" : "异常";
       status.className = "tag " + data.status;
+      document.querySelector("#checked-url").textContent = data.target_url;
       document.querySelector("#code").textContent = data.status_code ?? "未收到 HTTP 响应";
       document.querySelector("#duration").textContent = data.response_ms + " ms";
       document.querySelector("#time").textContent = new Intl.DateTimeFormat("zh-CN", {
@@ -84,14 +182,16 @@
       }).format(new Date(data.checked_at)) + "（北京时间）";
       document.querySelector("#error").textContent = data.error || "无";
     } catch (error) {
-      notice.textContent = "本次操作未完成，下面保留上次结果。请确认巡小站后端仍在运行。详情：" + error.message;
-      notice.hidden = false;
+      showError(new Error("本次未获取新结果，下面保留上次结果。" + error.message));
     } finally {
-      button.disabled = false;
-      button.textContent = "立即检查";
+      busy = false;
+      checkButton.textContent = "立即检查";
       result.setAttribute("aria-busy", "false");
+      syncButtons();
     }
   });
+
+  loadTarget();
 </script>
 </body>
 </html>
