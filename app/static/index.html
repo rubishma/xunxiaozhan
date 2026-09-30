@@ -25,6 +25,10 @@
     .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px; }
     dl { display: grid; grid-template-columns: 120px 1fr; gap: 12px; }
     dt { color: #526479; } dd { margin: 0; overflow-wrap: anywhere; }
+    .history-list { padding-left: 24px; }
+    .history-list li { padding: 12px 0; border-bottom: 1px solid #dce4ed; overflow-wrap: anywhere; }
+    .history-list p { margin: 4px 0; }
+    #history-notice { color: #922c2c; }
     #notice, #add-notice { color: #922c2c; }
     #target-list { list-style: none; padding: 0; display: grid; gap: 10px; }
     .target-row { display: grid; gap: 4px; text-align: left; width: 100%; background: #f7f9fc; color: #192c40; border: 1px solid #ccd8e5; overflow-wrap: anywhere; }
@@ -42,13 +46,13 @@
 <body>
 <main>
   <header>
-    <p class="muted">学习版本 · 多目标列表与手动检查</p>
+    <p class="muted">学习版本 · 多目标管理与检查历史</p>
     <h1>巡小站</h1>
     <p class="muted">检查一次，读懂一次结果。</p>
   </header>
   <section class="card" aria-labelledby="list-title">
     <h2 id="list-title">目标列表 <small id="target-count"></small></h2>
-    <p class="muted">选择一个目标后，再编辑、暂停或检查。列表结果仅保留在本页，刷新后清空。</p>
+    <p class="muted">选择一个目标后读取已保存结果，再编辑、暂停或检查。页面不会自动发起巡检。</p>
     <p id="list-notice" role="status" hidden></p>
     <ul id="target-list"><li>正在读取目标列表…</li></ul>
     <details>
@@ -83,11 +87,12 @@
     </form>
     <p id="hint" class="muted" role="status">正在读取已保存的配置…</p>
     <p id="notice" role="alert" hidden></p>
-    <p class="muted">配置保存后重启仍保留。请求总时限 10 秒；检查结果暂不保存历史。</p>
+    <p class="muted">配置和检查历史在重启后仍保留。请求总时限 10 秒；修改网址不会改写旧记录。</p>
   </section>
   <section class="card" aria-labelledby="result-title" aria-live="polite" aria-busy="false" id="result">
-    <h2 id="result-title">本页最近一次结果</h2>
-    <span id="status" class="tag">尚未检查</span>
+    <h2 id="result-title">最近保存的检查结果</h2>
+    <p id="result-note" class="muted">结果代表检查当时的情况，不代表当前仍然正常。</p>
+    <span id="status" class="tag">未选择目标</span>
     <dl>
       <dt>实际检查网址</dt><dd id="checked-url">—</dd>
       <dt>HTTP 状态码</dt><dd id="code">—</dd>
@@ -95,6 +100,13 @@
       <dt>检查开始时间</dt><dd id="time">—</dd>
       <dt>错误原因</dt><dd id="error">点击“立即检查”获取真实结果。</dd>
     </dl>
+  </section>
+  <section class="card" aria-labelledby="history-title">
+    <h2 id="history-title">近期检查历史</h2>
+    <p class="muted">显示最近 20 条，最新记录在前；时间均为北京时间。更早记录仍保存在数据库。</p>
+    <p id="history-summary" role="status">请选择目标。</p>
+    <p id="history-notice" role="alert" hidden></p>
+    <ol id="history-list" class="history-list"></ol>
   </section>
   <p class="muted">成功以最终 HTTP 200–299 为准，不代表网站所有业务都正常。</p>
 </main>
@@ -122,7 +134,13 @@
   let savedTarget = null;
   let busy = false;
   let loaded = false;
-  // 暂存本页结果，按编号分开；刷新后清空，下一轮再写入数据库。
+  const historyList = document.querySelector("#history-list");
+  const historySummary = document.querySelector("#history-summary");
+  const historyNotice = document.querySelector("#history-notice");
+  let historyRows = [];
+  let historyState = "empty";
+  let historyRequest = 0;
+  // 仅用于列表展示的缓存；结果和历史由后端数据库读取。
   const results = new Map();
 
   function isDirty() {
@@ -154,7 +172,9 @@
       const badge = document.createElement("span");
       const cached = results.get(target.id);
       badge.textContent = target.paused ? "已暂停" :
-        cached ? (cached.status === "up" ? "正常（本页结果）" : "异常（本页结果）") : "尚未检查（本页）";
+        cached ? (cached.target_url !== target.url ? "网址已变更，请重新检查" :
+          cached.status === "up" ? "正常（最近保存结果）" : "异常（最近保存结果）") :
+        results.has(target.id) ? "尚未检查" : "选中后读取结果";
       button.append(title, url, badge);
       button.addEventListener("click", () => selectTarget(target));
       row.append(button);
@@ -186,19 +206,76 @@
   }
 
   function renderResult() {
-    const data = savedTarget && results.get(savedTarget.id);
+    const data = historyRows[0];
     document.querySelector("#result-title").textContent = savedTarget ?
-      "本页最近一次结果 · #" + savedTarget.id : "本页最近一次结果";
+      "最近保存的检查结果 · #" + savedTarget.id : "最近保存的检查结果";
     const status = document.querySelector("#status");
-    status.textContent = data ? (data.status === "up" ? "正常" : "异常") : "尚未检查";
+    status.textContent = data ? (data.status === "up" ? "正常" : "异常") :
+      !savedTarget ? "未选择目标" : historyState === "loading" ? "正在读取" :
+      historyState === "error" ? "结果未能读取" : "尚未检查";
+    document.querySelector("#result-note").textContent = data && data.target_url !== savedTarget?.url ?
+      "注意：这是修改网址之前的记录，请核对实际检查网址；当前网址还需重新检查。" :
+      "结果代表检查当时的情况，不代表当前仍然正常。暂停时仍可查看历史。";
     status.className = data ? "tag " + data.status : "tag";
     document.querySelector("#checked-url").textContent = data ? data.target_url : "—";
     document.querySelector("#code").textContent = data ? (data.status_code ?? "未收到 HTTP 响应") : "—";
     document.querySelector("#duration").textContent = data ? data.response_ms + " ms" : "—";
-    document.querySelector("#time").textContent = data ? new Intl.DateTimeFormat("zh-CN", {
+    document.querySelector("#time").textContent = data ? formatTime(data.checked_at) : "—";
+    document.querySelector("#error").textContent = data ? (data.error || "无") : "—";
+  }
+
+  function formatTime(value) {
+    return new Intl.DateTimeFormat("zh-CN", {
       timeZone: "Asia/Shanghai", dateStyle: "short", timeStyle: "medium", hour12: false
-    }).format(new Date(data.checked_at)) + "（北京时间）" : "—";
-    document.querySelector("#error").textContent = data ? (data.error || "无") : "尚未取得本页检查结果。";
+    }).format(new Date(value)) + "（北京时间）";
+  }
+
+  function renderHistory() {
+    historyList.replaceChildren();
+    for (const row of historyRows) {
+      const item = document.createElement("li");
+      const title = document.createElement("strong");
+      title.textContent = formatTime(row.checked_at) + " · " + (row.status === "up" ? "正常" : "异常");
+      const detail = document.createElement("p");
+      detail.textContent = (row.status_code === null ? "未收到 HTTP 响应" : "HTTP " + row.status_code) +
+        " · " + row.response_ms + " ms · " + (row.error || "无错误");
+      const snapshot = document.createElement("p");
+      snapshot.className = "muted";
+      snapshot.textContent = "检查时配置：" + row.target_name + " · " + row.target_url;
+      item.append(title, detail, snapshot);
+      historyList.append(item);
+    }
+    historySummary.textContent = !savedTarget ? "请选择目标。" :
+      historyState === "loading" ? "正在读取历史…" :
+      historyState === "error" ? "未能读取历史，请重新选择目标或刷新页面重试。" :
+      historyRows.length ? "目标 #" + savedTarget.id + " · 已加载 " + historyRows.length + " 条记录" :
+      "该目标尚无保存的检查记录，请点击立即检查。";
+    renderResult();
+  }
+
+  async function loadHistory(targetId) {
+    const requestNumber = ++historyRequest;
+    historyRows = [];
+    historyState = targetId ? "loading" : "empty";
+    historyNotice.hidden = true;
+    renderHistory();
+    if (!targetId) return;
+    results.delete(targetId);
+    renderTargets();
+    try {
+      const rows = await api("/api/targets/" + targetId + "/history");
+      // 快速切换目标时，忽略较早发出的请求，防止 A 的响应盖住 B。
+      if (requestNumber !== historyRequest || savedTarget?.id !== targetId) return;
+      historyRows = rows;
+      historyState = "loaded";
+      results.set(targetId, rows[0] ?? null);
+    } catch (error) {
+      if (requestNumber !== historyRequest || savedTarget?.id !== targetId) return;
+      historyState = "error";
+      showError(error, historyNotice);
+    }
+    renderHistory();
+    renderTargets();
   }
 
   function selectTarget(target) {
@@ -206,7 +283,7 @@
     nameInput.value = target?.name ?? "";
     urlInput.value = target?.url ?? "";
     notice.hidden = true;
-    renderResult();
+    loadHistory(target?.id);
     syncButtons();
   }
 
@@ -328,7 +405,7 @@
     const target = savedTarget;
     if (!window.confirm(
       "确定删除目标 #" + target.id + " · " + target.name + "？\n" + target.url +
-      "\n删除后无法直接恢复配置；本页结果也会移除。若只是暂时不检查，请选择暂停。"
+      "\n将永久删除该目标配置及全部检查历史，无法直接撤销。若只是暂时不检查，请选择暂停。"
     )) return;
     busy = true;
     syncButtons();
@@ -367,10 +444,9 @@
     try {
       const data = await api("/api/targets/" + checkedId + "/check", { method: "POST" });
       if (data.target_id !== checkedId) throw new Error("结果编号与目标不一致，请刷新页面。");
-      results.set(checkedId, data);
-      renderResult();
+      await loadHistory(checkedId);
     } catch (error) {
-      showError(new Error("本次未获取新结果，下面保留该目标上次结果。" + error.message));
+      showError(new Error("本次未确认结果已保存，下面仅显示此前已加载的记录。" + error.message));
     } finally {
       busy = false;
       checkButton.textContent = "立即检查";

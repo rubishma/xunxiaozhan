@@ -136,6 +136,7 @@ class ManualCheckTests(unittest.TestCase):
             self.assertFalse(client.get("/api/targets/1").json()["paused"])
             self.assertEqual(client.get("/api/health").status_code, 200)
             self.assertEqual(first.result(timeout=3).json()["status"], "up")
+            self.assertEqual(len(client.get("/api/targets/1/history").json()), 1)
             self.assertEqual(client.get("/api/targets/1").json()["url"], self.base + "/slow")
 
     def test_saved_target_survives_restart_and_is_actually_checked(self):
@@ -397,6 +398,107 @@ class ManualCheckTests(unittest.TestCase):
             self.assertEqual(sum(r.status_code == 200 for r in responses), 1)
             self.assertTrue(all(r.status_code in (200, 404, 409) for r in responses))
             self.assertEqual(client.get("/api/targets").json(), [])
+
+
+    def test_history_persists_status_changes_and_original_configuration(self):
+        with TestClient(main.app) as client:
+            self.assertEqual(client.get("/api/targets/1/history").json(), [])
+            self.save(client, self.base + "/", "原名称")
+            first = client.post("/api/targets/1/check").json()
+            self.save(client, self.base + "/bad", "新名称")
+            second = client.post("/api/targets/1/check").json()
+            self.save(client, self.base + "/", "恢复名称")
+            third = client.post("/api/targets/1/check").json()
+            rows = client.get("/api/targets/1/history").json()
+            self.assertEqual(rows, [third, second, first])
+            self.assertEqual([r["status"] for r in rows], ["up", "down", "up"])
+            self.assertEqual(rows[-1]["target_name"], "原名称")
+            self.assertEqual(rows[1]["target_url"], self.base + "/bad")
+            self.assertTrue(all(r["checked_at"].endswith("+00:00") for r in rows))
+            before = Target.request_count
+            client.patch("/api/targets/1/state", json={"paused": True})
+            self.assertEqual(client.post("/api/targets/1/check").status_code, 409)
+            self.assertEqual(client.get("/api/targets/1/history").json(), rows)
+            self.assertEqual(Target.request_count, before)
+        with TestClient(main.app) as restarted:
+            self.assertEqual(restarted.get("/api/targets/1/history").json(), rows)
+            self.assertTrue(restarted.get("/api/targets/1").json()["paused"])
+
+    def test_history_keeps_connection_failure_and_timeout(self):
+        with TestClient(main.app) as client:
+            with socket.socket() as reserved:
+                reserved.bind(("127.0.0.1", 0))
+                self.save(client, f"http://127.0.0.1:{reserved.getsockname()[1]}/")
+                refused = client.post("/api/targets/1/check").json()
+            self.save(client, self.base + "/slow")
+            with patch.object(main, "CHECK_TIMEOUT_SECONDS", 0.05):
+                timed_out = client.post("/api/targets/1/check").json()
+            self.assertEqual(client.get("/api/targets/1/history").json(), [timed_out, refused])
+            for row in [timed_out, refused]:
+                self.assertEqual(row["status"], "down")
+                self.assertIsNone(row["status_code"])
+                self.assertGreaterEqual(row["response_ms"], 0)
+            self.assertEqual(timed_out["error"], "请求超时")
+            self.assertIn("连接", refused["error"])
+
+    def test_history_limit_is_display_limit_not_data_deletion(self):
+        with TestClient(main.app) as client:
+            self.save(client, self.base + "/")
+            recorded = []
+            for _ in range(22):
+                response = client.post("/api/targets/1/check")
+                self.assertEqual(response.status_code, 200)
+                recorded.append(response.json())
+            other = client.post("/api/targets", json={"name": "另一个", "url": self.base + "/bad"}).json()
+            path = f"/api/targets/{other['id']}"
+            self.assertEqual(client.get(path + "/history").json(), [])
+            other_result = client.post(path + "/check").json()
+            self.assertEqual(client.get(path + "/history").json(), [other_result])
+            self.assertEqual(client.get("/api/targets/1/history").json(), list(reversed(recorded[-20:])))
+            for target_id in [-1, 999, 999999999999999999999]:
+                self.assertEqual(client.get(f"/api/targets/{target_id}/history").status_code, 404)
+            with closing(sqlite3.connect(database.DB_PATH)) as connection:
+                count = connection.execute("SELECT COUNT(*) FROM checks WHERE target_id = 1").fetchone()[0]
+            self.assertEqual(count, 22)
+
+    def test_history_write_failure_is_reported_without_fake_success(self):
+        with TestClient(main.app) as client:
+            self.save(client, self.base + "/")
+            first = client.post("/api/targets/1/check").json()
+            before = Target.request_count
+            with patch.object(database, "save_check", side_effect=sqlite3.OperationalError("test write failure")):
+                with self.assertLogs("app.main", level="ERROR"):
+                    response = client.post("/api/targets/1/check")
+            self.assertEqual(response.status_code, 503)
+            self.assertIn("检查已执行，但历史保存失败", response.json()["detail"])
+            self.assertEqual(Target.request_count, before + 1)
+            self.assertEqual(client.get("/api/targets/1/history").json(), [first])
+            self.assertEqual(client.post("/api/targets/1/check").status_code, 200)
+            self.assertEqual(len(client.get("/api/targets/1/history").json()), 2)
+
+    def test_target_and_history_delete_atomically_and_other_target_survives(self):
+        with TestClient(main.app) as client:
+            self.save(client, self.base + "/")
+            first = client.post("/api/targets/1/check").json()
+            other = client.post("/api/targets", json={"name": "保留", "url": self.base + "/bad"}).json()
+            path = f"/api/targets/{other['id']}"
+            second = client.post(path + "/check").json()
+            # 在测试数据库故意拒绝删除历史，目标和历史都应该回滚保留。
+            with closing(sqlite3.connect(database.DB_PATH)) as connection:
+                connection.execute("CREATE TRIGGER refuse_history_delete BEFORE DELETE ON checks BEGIN SELECT RAISE(ABORT, 'test failure'); END")
+            with self.assertLogs("app.main", level="ERROR"):
+                self.assertEqual(client.delete("/api/targets/1").status_code, 503)
+            self.assertEqual(client.get("/api/targets/1").status_code, 200)
+            self.assertEqual(client.get("/api/targets/1/history").json(), [first])
+            with closing(sqlite3.connect(database.DB_PATH)) as connection:
+                connection.execute("DROP TRIGGER refuse_history_delete")
+            self.assertEqual(client.delete("/api/targets/1").status_code, 200)
+            self.assertEqual(client.get("/api/targets/1/history").status_code, 404)
+            self.assertEqual(client.get(path + "/history").json(), [second])
+            with closing(sqlite3.connect(database.DB_PATH)) as connection:
+                self.assertEqual(connection.execute("SELECT COUNT(*) FROM checks WHERE target_id = 1").fetchone()[0], 0)
+            new = client.post("/api/targets", json={"name": "重新添加", "url": self.base + "/"}).json()
+            self.assertEqual(client.get(f"/api/targets/{new['id']}/history").json(), [])
 
 if __name__ == "__main__":
     unittest.main()

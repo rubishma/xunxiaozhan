@@ -14,9 +14,16 @@ class DuplicateTarget(Exception):
     pass
 
 
+def connect():
+    connection = sqlite3.connect(DB_PATH, timeout=3)
+    # SQLite 外键约束按连接启用，删除目标时一并删除其历史。
+    connection.execute("PRAGMA foreign_keys = ON")
+    return connection
+
+
 def initialize():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(DB_PATH, timeout=3)) as connection:
+    with closing(connect()) as connection:
         existed = connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'targets'"
         ).fetchone()
@@ -56,6 +63,21 @@ def initialize():
                 SELECT 1, COALESCE(MAX(id), 0) FROM targets
             """)
 
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS checks (
+                    id INTEGER PRIMARY KEY,
+                    target_id INTEGER NOT NULL REFERENCES targets(id) ON DELETE CASCADE,
+                    target_name TEXT NOT NULL,
+                    target_url TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('up', 'down')),
+                    status_code INTEGER,
+                    response_ms REAL NOT NULL CHECK (response_ms >= 0),
+                    checked_at TEXT NOT NULL,
+                    error TEXT
+                )
+            """)
+            connection.execute("CREATE INDEX IF NOT EXISTS checks_target_recent ON checks(target_id, id DESC)")
+
 
 def as_target(row):
     target = dict(row)
@@ -64,7 +86,7 @@ def as_target(row):
 
 
 def list_targets():
-    with closing(sqlite3.connect(DB_PATH, timeout=3)) as connection:
+    with closing(connect()) as connection:
         connection.row_factory = sqlite3.Row
         rows = connection.execute("SELECT id, name, url, paused FROM targets ORDER BY id").fetchall()
         return [as_target(row) for row in rows]
@@ -73,7 +95,7 @@ def list_targets():
 def get_target(target_id):
     if not 1 <= target_id <= 9223372036854775807:
         raise TargetNotFound()
-    with closing(sqlite3.connect(DB_PATH, timeout=3)) as connection:
+    with closing(connect()) as connection:
         connection.row_factory = sqlite3.Row
         row = connection.execute(
             "SELECT id, name, url, paused FROM targets WHERE id = ?", (target_id,)
@@ -84,7 +106,7 @@ def get_target(target_id):
 
 
 def create_target(name, url):
-    with closing(sqlite3.connect(DB_PATH, timeout=3)) as connection:
+    with closing(connect()) as connection:
         with connection:
             # 串行化“查重 + 写入”，防止两个请求同时插入同一网址。
             connection.execute("BEGIN IMMEDIATE")
@@ -105,7 +127,7 @@ def create_target(name, url):
 
 
 def save_target(target_id, name, url):
-    with closing(sqlite3.connect(DB_PATH, timeout=3)) as connection:
+    with closing(connect()) as connection:
         with connection:
             connection.execute("BEGIN IMMEDIATE")
             duplicate = connection.execute(
@@ -122,7 +144,7 @@ def save_target(target_id, name, url):
 
 
 def set_paused(target_id, paused):
-    with closing(sqlite3.connect(DB_PATH, timeout=3)) as connection:
+    with closing(connect()) as connection:
         with connection:
             cursor = connection.execute(
                 "UPDATE targets SET paused = ? WHERE id = ?", (int(paused), target_id)
@@ -133,8 +155,31 @@ def set_paused(target_id, paused):
 
 
 def delete_target(target_id):
-    with closing(sqlite3.connect(DB_PATH, timeout=3)) as connection:
+    with closing(connect()) as connection:
         with connection:
             cursor = connection.execute("DELETE FROM targets WHERE id = ?", (target_id,))
             if cursor.rowcount == 0:
                 raise TargetNotFound()
+
+
+def save_check(result):
+    # 保留当时的配置快照；只有提交成功，接口才报告检查结果已保存。
+    with closing(connect()) as connection:
+        with connection:
+            cursor = connection.execute("""
+                INSERT INTO checks
+                    (target_id, target_name, target_url, status, status_code, response_ms, checked_at, error)
+                VALUES (:target_id, :target_name, :target_url, :status, :status_code, :response_ms, :checked_at, :error)
+            """, result)
+            check_id = cursor.lastrowid
+    return {"id": check_id, **result}
+
+
+def list_checks(target_id):
+    get_target(target_id)  # 无记录返回空列表，不存在的目标返回 404。
+    with closing(connect()) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT * FROM checks WHERE target_id = ? ORDER BY id DESC LIMIT 20", (target_id,)
+        ).fetchall()
+        return [dict(row) for row in rows]

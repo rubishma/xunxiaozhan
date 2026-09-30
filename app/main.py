@@ -102,6 +102,11 @@ def read_target(target_id: int):
     return database.get_target(target_id)
 
 
+@app.get("/api/targets/{target_id}/history")
+def read_history(target_id: int):
+    return database.list_checks(target_id)
+
+
 async def lock_for(target_id):
     # 先确认目标存在，避免给不存在的编号创建锁。
     await asyncio.to_thread(database.get_target, target_id)
@@ -173,7 +178,7 @@ async def check_target(target_id: int):
         if status_code is None:
             elapsed_ms = round((perf_counter() - started) * 1000, 1)
 
-        return {
+        result = {
             "target_id": target["id"],
             "target_name": target["name"],
             "target_url": target["url"],
@@ -183,3 +188,8 @@ async def check_target(target_id: int):
             "checked_at": checked_at,
             "error": error,
         }
+        try:
+            return await asyncio.to_thread(database.save_check, result)
+        except sqlite3.Error:
+            logger.exception("Failed to save check history for target %s", target_id)
+            raise HTTPException(status_code=503, detail="检查已执行，但历史保存失败，请查看后端终端日志") from None
