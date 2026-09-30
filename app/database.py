@@ -21,6 +21,7 @@ def initialize():
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'targets'"
         ).fetchone()
         with connection:
+            connection.execute("BEGIN IMMEDIATE")
             connection.execute("""
                 CREATE TABLE IF NOT EXISTS targets (
                     id INTEGER PRIMARY KEY,
@@ -41,6 +42,19 @@ def initialize():
                     "INSERT INTO targets (name, url) VALUES (?, ?)",
                     ("本机测试网站", "http://127.0.0.1:8765/"),
                 )
+
+            # 记录已分配的最大编号。删除目标不减少它，防止旧页面误操作新目标。
+            # 单独加表即可兼容旧数据库，无需重建或清空 targets。
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS target_id_sequence (
+                    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                    last_id INTEGER NOT NULL CHECK (last_id >= 0)
+                )
+            """)
+            connection.execute("""
+                INSERT OR IGNORE INTO target_id_sequence (singleton, last_id)
+                SELECT 1, COALESCE(MAX(id), 0) FROM targets
+            """)
 
 
 def as_target(row):
@@ -76,10 +90,17 @@ def create_target(name, url):
             connection.execute("BEGIN IMMEDIATE")
             if connection.execute("SELECT 1 FROM targets WHERE url = ?", (url,)).fetchone():
                 raise DuplicateTarget()
-            cursor = connection.execute(
-                "INSERT INTO targets (name, url) VALUES (?, ?)", (name, url)
+            allocated = connection.execute("""
+                UPDATE target_id_sequence SET last_id = last_id + 1
+                WHERE singleton = 1 AND last_id < 9223372036854775807
+                RETURNING last_id
+            """).fetchone()
+            if allocated is None:
+                raise sqlite3.IntegrityError("Target ID sequence unavailable or exhausted")
+            target_id = allocated[0]
+            connection.execute(
+                "INSERT INTO targets (id, name, url) VALUES (?, ?, ?)", (target_id, name, url)
             )
-            target_id = cursor.lastrowid
     return get_target(target_id)
 
 
@@ -109,3 +130,11 @@ def set_paused(target_id, paused):
             if cursor.rowcount == 0:
                 raise TargetNotFound()
     return get_target(target_id)
+
+
+def delete_target(target_id):
+    with closing(sqlite3.connect(DB_PATH, timeout=3)) as connection:
+        with connection:
+            cursor = connection.execute("DELETE FROM targets WHERE id = ?", (target_id,))
+            if cursor.rowcount == 0:
+                raise TargetNotFound()

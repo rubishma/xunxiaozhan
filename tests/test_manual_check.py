@@ -285,6 +285,7 @@ class ManualCheckTests(unittest.TestCase):
             for target_id in [999999, -1, 999999999999999999999999]:
                 path = f"/api/targets/{target_id}"
                 self.assertEqual(client.get(path).status_code, 404)
+                self.assertEqual(client.delete(path).status_code, 404)
                 self.assertEqual(client.post(path + "/check").status_code, 404)
                 self.assertEqual(client.patch(path + "/state", json={"paused": True}).status_code, 404)
                 self.assertEqual(client.put(path, json={"name": "不存在", "url": self.base + "/"}).status_code, 404)
@@ -321,6 +322,81 @@ class ManualCheckTests(unittest.TestCase):
             self.assertEqual(created.status_code, 201)
             self.assertEqual(len(client.get("/api/targets").json()), 1)
 
+
+
+    def test_delete_only_selected_target_and_reject_stale_requests(self):
+        with TestClient(main.app) as client:
+            original = client.get("/api/targets/1").json()
+            second = client.post("/api/targets", json={"name": original["name"], "url": self.base + "/"}).json()
+            path = f"/api/targets/{second['id']}"
+            client.patch(path + "/state", json={"paused": True})
+            before = Target.request_count
+            deleted = client.delete(path)
+            self.assertEqual(deleted.status_code, 200)
+            self.assertEqual(deleted.json(), {"deleted_id": second["id"]})
+            self.assertEqual(client.get("/api/targets").json(), [original])
+            # 同网址重新添加也必须是新编号，旧页面不能通过旧编号修改新目标。
+            new = client.post("/api/targets", json={"name": original["name"], "url": self.base + "/"}).json()
+            self.assertGreater(new["id"], second["id"])
+            self.assertEqual(client.delete(path).status_code, 404)
+            self.assertEqual(client.get(path).status_code, 404)
+            self.assertEqual(client.post(path + "/check").status_code, 404)
+            self.assertEqual(client.patch(path + "/state", json={"paused": True}).status_code, 404)
+            self.assertEqual(client.put(path, json={"name": "旧页面", "url": self.base + "/bad"}).status_code, 404)
+            self.assertEqual(client.get(f"/api/targets/{new['id']}").json(), new)
+            self.assertEqual(Target.request_count, before)
+        with TestClient(main.app) as restarted:
+            self.assertEqual(restarted.get("/api/targets").json(), [original, new])
+
+    def test_delete_last_target_restart_empty_and_never_reuse_id(self):
+        with TestClient(main.app) as client:
+            self.assertEqual(client.delete("/api/targets/1").status_code, 200)
+            self.assertEqual(client.get("/api/targets").json(), [])
+        with TestClient(main.app) as restarted:
+            self.assertEqual(restarted.get("/api/targets").json(), [])
+            new = restarted.post("/api/targets", json={"name": "重新开始", "url": self.base + "/"}).json()
+            self.assertGreater(new["id"], 1)
+            self.assertEqual(restarted.post("/api/targets/1/check").status_code, 404)
+
+    def test_upgrade_number_sequence_preserves_existing_rows(self):
+        database.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(database.DB_PATH)) as connection:
+            with connection:
+                connection.execute("CREATE TABLE targets (id INTEGER PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, paused INTEGER NOT NULL DEFAULT 0 CHECK (paused IN (0, 1)))")
+                connection.execute("INSERT INTO targets VALUES (7, ?, ?, 1)", ("旧配置", self.base + "/"))
+        with TestClient(main.app) as client:
+            old = client.get("/api/targets/7").json()
+            self.assertEqual(old, {"id": 7, "name": "旧配置", "url": self.base + "/", "paused": True})
+            response = client.post("/api/targets", json={"name": "新配置", "url": self.base + "/bad"})
+            self.assertEqual(response.status_code, 201, response.text)
+            added = response.json()
+            self.assertGreater(added["id"], 7)
+            self.assertEqual(client.delete(f"/api/targets/{added['id']}").status_code, 200)
+        with TestClient(main.app) as restarted:
+            self.assertEqual(restarted.get("/api/targets").json(), [old])
+            new = restarted.post("/api/targets", json={"name": "再添加", "url": self.base + "/bad"}).json()
+            self.assertGreater(new["id"], added["id"])
+
+    def test_delete_busy_target_rejected_and_concurrent_delete_only_once(self):
+        Target.held_entered.clear()
+        Target.held_release.clear()
+        with TestClient(main.app) as client, ThreadPoolExecutor() as pool:
+            self.save(client, self.base + "/held")
+            other = client.post("/api/targets", json={"name": "另一个", "url": self.base + "/"}).json()
+            pending = pool.submit(client.post, "/api/targets/1/check")
+            try:
+                self.assertTrue(Target.held_entered.wait(2))
+                self.assertEqual(client.delete("/api/targets/1").status_code, 409)
+                self.assertEqual(client.get("/api/targets/1").status_code, 200)
+                self.assertEqual(client.delete(f"/api/targets/{other['id']}").status_code, 200)
+                self.assertFalse(pending.done())
+            finally:
+                Target.held_release.set()
+            self.assertEqual(pending.result(timeout=3).json()["status"], "up")
+            responses = list(pool.map(lambda _: client.delete("/api/targets/1"), range(2)))
+            self.assertEqual(sum(r.status_code == 200 for r in responses), 1)
+            self.assertTrue(all(r.status_code in (200, 404, 409) for r in responses))
+            self.assertEqual(client.get("/api/targets").json(), [])
 
 if __name__ == "__main__":
     unittest.main()

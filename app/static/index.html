@@ -19,6 +19,7 @@
     label { display: block; margin-top: 16px; font-weight: 600; }
     input { width: 100%; font: inherit; padding: 10px; border: 1px solid #8495a7; border-radius: 8px; }
     button { background: #235bc1; color: white; border: 0; border-radius: 8px; padding: 12px 20px; font: inherit; cursor: pointer; }
+    button.danger { background: #a22d2d; }
     button:disabled { opacity: .65; cursor: not-allowed; }
     button:focus-visible, input:focus-visible { outline: 3px solid #192c40; outline-offset: 3px; }
     .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px; }
@@ -48,6 +49,7 @@
   <section class="card" aria-labelledby="list-title">
     <h2 id="list-title">目标列表 <small id="target-count"></small></h2>
     <p class="muted">选择一个目标后，再编辑、暂停或检查。列表结果仅保留在本页，刷新后清空。</p>
+    <p id="list-notice" role="status" hidden></p>
     <ul id="target-list"><li>正在读取目标列表…</li></ul>
     <details>
       <summary>添加目标</summary>
@@ -76,6 +78,7 @@
         <button id="cancel" type="button" disabled>取消修改</button>
         <button id="check" type="button" disabled>立即检查</button>
         <button id="pause" type="button" disabled>暂停巡检</button>
+        <button id="delete" class="danger" type="button" disabled>删除目标</button>
       </div>
     </form>
     <p id="hint" class="muted" role="status">正在读取已保存的配置…</p>
@@ -103,6 +106,8 @@
   const cancelButton = document.querySelector("#cancel");
   const checkButton = document.querySelector("#check");
   const pauseButton = document.querySelector("#pause");
+  const deleteButton = document.querySelector("#delete");
+  const listNotice = document.querySelector("#list-notice");
   const mode = document.querySelector("#mode");
   const notice = document.querySelector("#notice");
   const hint = document.querySelector("#hint");
@@ -164,6 +169,7 @@
     cancelButton.disabled = busy || !savedTarget || !dirty;
     checkButton.disabled = busy || !savedTarget || dirty || savedTarget.paused;
     pauseButton.disabled = busy || !savedTarget || dirty;
+    deleteButton.disabled = busy || !savedTarget || dirty;
     addName.disabled = addUrl.disabled = addButton.disabled = busy || !loaded || dirty;
     mode.textContent = !savedTarget ? "未选择目标" : savedTarget.paused ? "已暂停" : "允许检查";
     mode.className = savedTarget?.paused ? "tag paused" : "tag";
@@ -197,8 +203,8 @@
 
   function selectTarget(target) {
     savedTarget = target;
-    nameInput.value = target.name;
-    urlInput.value = target.url;
+    nameInput.value = target?.name ?? "";
+    urlInput.value = target?.url ?? "";
     notice.hidden = true;
     renderResult();
     syncButtons();
@@ -314,6 +320,38 @@
     } finally {
       busy = false;
       syncButtons();
+    }
+  });
+
+  deleteButton.addEventListener("click", async () => {
+    if (busy || deleteButton.disabled) return;
+    const target = savedTarget;
+    if (!window.confirm(
+      "确定删除目标 #" + target.id + " · " + target.name + "？\n" + target.url +
+      "\n删除后无法直接恢复配置；本页结果也会移除。若只是暂时不检查，请选择暂停。"
+    )) return;
+    busy = true;
+    syncButtons();
+    notice.hidden = true;
+    listNotice.hidden = true;
+    deleteButton.textContent = "正在删除…";
+    try {
+      const data = await api("/api/targets/" + target.id, { method: "DELETE" });
+      if (data.deleted_id !== target.id) throw new Error("删除响应编号不一致，请刷新列表核对。");
+      targets = targets.filter(item => item.id !== target.id);
+      results.delete(target.id);
+      selectTarget(targets[0] ?? null);
+      listNotice.textContent = "已删除目标 #" + target.id + " · " + target.name;
+      listNotice.hidden = false;
+      if (!savedTarget) addForm.closest("details").open = true;
+    } catch (error) {
+      showError(error);
+    } finally {
+      busy = false;
+      deleteButton.textContent = "删除目标";
+      syncButtons();
+      if (!savedTarget) addName.focus();
+      else list.querySelector("button[aria-pressed=\"true\"]")?.focus();
     }
   });
 

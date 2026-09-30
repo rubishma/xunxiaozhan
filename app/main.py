@@ -126,6 +126,17 @@ async def update_pause(target_id: int, state: PauseInput):
         return await asyncio.to_thread(database.set_paused, target_id, state.paused)
 
 
+@app.delete("/api/targets/{target_id}")
+async def remove_target(target_id: int):
+    lock = await lock_for(target_id)
+    if lock.locked():
+        raise HTTPException(status_code=409, detail="该目标正在检查或保存，请完成后再删除")
+    async with lock:
+        await asyncio.to_thread(database.delete_target, target_id)
+    # 锁保留到进程结束，避免已取得旧锁的请求与新锁并存。
+    return {"deleted_id": target_id}
+
+
 @app.post("/api/targets/{target_id}/check")
 async def check_target(target_id: int):
     lock = await lock_for(target_id)
