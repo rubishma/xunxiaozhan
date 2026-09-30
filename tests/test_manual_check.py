@@ -19,10 +19,15 @@ class Target(BaseHTTPRequestHandler):
     entered = threading.Event()
     request_count = 0
     count_lock = threading.Lock()
+    held_entered = threading.Event()
+    held_release = threading.Event()
 
     def do_GET(self):
         with Target.count_lock:
             Target.request_count += 1
+        if self.path == "/held":
+            self.held_entered.set()
+            self.held_release.wait(5)
         if self.path == "/slow":
             self.entered.set()
             time.sleep(0.4)
@@ -64,14 +69,14 @@ class ManualCheckTests(unittest.TestCase):
         self.addCleanup(db_patch.stop)
 
     def save(self, client, url, name="本机测试"):
-        response = client.put("/api/target", json={"name": name, "url": url})
+        response = client.put("/api/targets/1", json={"name": name, "url": url})
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
 
     def inspect(self, path):
         with TestClient(main.app) as client:
             self.save(client, self.base + path)
-            response = client.post("/api/check")
+            response = client.post("/api/targets/1/check")
             self.assertEqual(response.status_code, 200)
             return response.json()
 
@@ -102,7 +107,7 @@ class ManualCheckTests(unittest.TestCase):
             url = f"http://127.0.0.1:{reserved.getsockname()[1]}/"
             with TestClient(main.app) as client:
                 self.save(client, url)
-                data = client.post("/api/check").json()
+                data = client.post("/api/targets/1/check").json()
         self.assertEqual(data["status"], "down")
         self.assertIsNone(data["status_code"])
         self.assertIn("连接", data["error"])
@@ -111,35 +116,35 @@ class ManualCheckTests(unittest.TestCase):
         with TestClient(main.app) as client:
             self.save(client, self.base + "/slow")
             with patch.object(main, "CHECK_TIMEOUT_SECONDS", 0.05):
-                data = client.post("/api/check").json()
+                data = client.post("/api/targets/1/check").json()
             self.assertEqual(data["error"], "请求超时")
             self.assertIsNone(data["status_code"])
             self.save(client, self.base + "/")
-            self.assertEqual(client.post("/api/check").json()["status"], "up")
+            self.assertEqual(client.post("/api/targets/1/check").json()["status"], "up")
 
     def test_overlap_and_edit_rejected_while_health_still_responds(self):
         Target.entered.clear()
         with TestClient(main.app) as client, ThreadPoolExecutor() as pool:
             self.save(client, self.base + "/slow")
-            first = pool.submit(client.post, "/api/check")
+            first = pool.submit(client.post, "/api/targets/1/check")
             self.assertTrue(Target.entered.wait(2))
-            self.assertEqual(client.post("/api/check").status_code, 409)
-            edit = client.put("/api/target", json={"name": "不能中途改", "url": self.base + "/"})
+            self.assertEqual(client.post("/api/targets/1/check").status_code, 409)
+            edit = client.put("/api/targets/1", json={"name": "不能中途改", "url": self.base + "/"})
             self.assertEqual(edit.status_code, 409)
-            pause = client.patch("/api/target/state", json={"paused": True})
+            pause = client.patch("/api/targets/1/state", json={"paused": True})
             self.assertEqual(pause.status_code, 409)
-            self.assertFalse(client.get("/api/target").json()["paused"])
+            self.assertFalse(client.get("/api/targets/1").json()["paused"])
             self.assertEqual(client.get("/api/health").status_code, 200)
             self.assertEqual(first.result(timeout=3).json()["status"], "up")
-            self.assertEqual(client.get("/api/target").json()["url"], self.base + "/slow")
+            self.assertEqual(client.get("/api/targets/1").json()["url"], self.base + "/slow")
 
     def test_saved_target_survives_restart_and_is_actually_checked(self):
         with TestClient(main.app) as client:
             saved = self.save(client, self.base + "/bad", "重启保留 ' 测试")
         # 重新执行应用启动流程，并从同一个 SQLite 文件中读取。
         with TestClient(main.app) as restarted:
-            self.assertEqual(restarted.get("/api/target").json(), saved)
-            result = restarted.post("/api/check").json()
+            self.assertEqual(restarted.get("/api/targets/1").json(), saved)
+            result = restarted.post("/api/targets/1/check").json()
             self.assertEqual(result["target_url"], saved["url"])
             self.assertEqual(result["target_name"], saved["name"])
             self.assertEqual(result["status_code"], 503)
@@ -160,42 +165,42 @@ class ManualCheckTests(unittest.TestCase):
             ]
             for payload in invalid:
                 with self.subTest(payload=payload):
-                    self.assertEqual(client.put("/api/target", json=payload).status_code, 422)
-                    self.assertEqual(client.get("/api/target").json(), before)
+                    self.assertEqual(client.put("/api/targets/1", json=payload).status_code, 422)
+                    self.assertEqual(client.get("/api/targets/1").json(), before)
 
     def test_database_failure_has_clear_error_and_does_not_replace_target(self):
         with TestClient(main.app) as client:
             before = self.save(client, self.base + "/")
             with patch.object(database, "save_target", side_effect=sqlite3.OperationalError("test failure")):
                 with self.assertLogs("app.main", level="ERROR"):
-                    response = client.put("/api/target", json={"name": "新名称", "url": self.base + "/bad"})
+                    response = client.put("/api/targets/1", json={"name": "新名称", "url": self.base + "/bad"})
             self.assertEqual(response.status_code, 503)
             self.assertIn("数据库", response.json()["detail"])
-            self.assertEqual(client.get("/api/target").json(), before)
+            self.assertEqual(client.get("/api/targets/1").json(), before)
 
 
     def test_pause_blocks_network_persists_and_resume_requires_manual_check(self):
         with TestClient(main.app) as client:
             self.save(client, self.base + "/")
             before = Target.request_count
-            response = client.patch("/api/target/state", json={"paused": True})
+            response = client.patch("/api/targets/1/state", json={"paused": True})
             self.assertEqual(response.status_code, 200)
             self.assertTrue(response.json()["paused"])
-            blocked = client.post("/api/check")
+            blocked = client.post("/api/targets/1/check")
             self.assertEqual(blocked.status_code, 409)
             self.assertIn("已暂停", blocked.json()["detail"])
             # 暂停时编辑名称不应意外恢复巡检。
             self.assertTrue(self.save(client, self.base + "/", "暂停中修改")["paused"])
             self.assertEqual(Target.request_count, before)
         with TestClient(main.app) as restarted:
-            self.assertTrue(restarted.get("/api/target").json()["paused"])
-            self.assertEqual(restarted.post("/api/check").status_code, 409)
-            resumed = restarted.patch("/api/target/state", json={"paused": False})
+            self.assertTrue(restarted.get("/api/targets/1").json()["paused"])
+            self.assertEqual(restarted.post("/api/targets/1/check").status_code, 409)
+            resumed = restarted.patch("/api/targets/1/state", json={"paused": False})
             self.assertEqual(resumed.status_code, 200)
             self.assertFalse(resumed.json()["paused"])
             # 恢复只是允许检查，本身不访问目标。
             self.assertEqual(Target.request_count, before)
-            self.assertEqual(restarted.post("/api/check").json()["status"], "up")
+            self.assertEqual(restarted.post("/api/targets/1/check").json()["status"], "up")
             self.assertEqual(Target.request_count, before + 1)
 
     def test_old_database_upgrade_preserves_configuration(self):
@@ -207,13 +212,13 @@ class ManualCheckTests(unittest.TestCase):
                     "INSERT INTO targets VALUES (1, ?, ?)", ("原来的练习站", self.base + "/bad")
                 )
         with TestClient(main.app) as client:
-            target = client.get("/api/target").json()
+            target = client.get("/api/targets/1").json()
             self.assertEqual(target["name"], "原来的练习站")
             self.assertEqual(target["url"], self.base + "/bad")
             self.assertFalse(target["paused"])
-            client.patch("/api/target/state", json={"paused": True})
+            client.patch("/api/targets/1/state", json={"paused": True})
         with TestClient(main.app) as restarted:
-            target = restarted.get("/api/target").json()
+            target = restarted.get("/api/targets/1").json()
             self.assertEqual(target["name"], "原来的练习站")
             self.assertEqual(target["url"], self.base + "/bad")
             self.assertTrue(target["paused"])
@@ -222,9 +227,99 @@ class ManualCheckTests(unittest.TestCase):
         with TestClient(main.app) as client:
             for value in ["false", 0, 1, None]:
                 with self.subTest(value=value):
-                    response = client.patch("/api/target/state", json={"paused": value})
+                    response = client.patch("/api/targets/1/state", json={"paused": value})
                     self.assertEqual(response.status_code, 422)
-                    self.assertFalse(client.get("/api/target").json()["paused"])
+                    self.assertFalse(client.get("/api/targets/1").json()["paused"])
+
+
+    def test_add_list_restart_and_target_isolation(self):
+        with TestClient(main.app) as client:
+            first = self.save(client, self.base + "/", "相同名称")
+            before = Target.request_count
+            added = client.post("/api/targets", json={"name": "相同名称", "url": self.base + "/bad"})
+            self.assertEqual(added.status_code, 201)
+            second = added.json()
+            self.assertNotEqual(first["id"], second["id"])
+            self.assertFalse(second["paused"])
+            self.assertEqual(Target.request_count, before)
+            second_path = f"/api/targets/{second['id']}"
+            self.assertEqual(len(client.get("/api/targets").json()), 2)
+            client.patch("/api/targets/1/state", json={"paused": True})
+            result = client.post(second_path + "/check").json()
+            self.assertEqual((result["target_id"], result["status_code"]), (second["id"], 503))
+            self.assertEqual(client.post("/api/targets/1/check").status_code, 409)
+            edited = client.put(second_path, json={"name": "只改第二个", "url": self.base + "/redirect"})
+            self.assertEqual(edited.status_code, 200)
+            original = client.get("/api/targets/1").json()
+            self.assertEqual((original["name"], original["url"], original["paused"]),
+                             ("相同名称", self.base + "/", True))
+        with TestClient(main.app) as restarted:
+            rows = restarted.get("/api/targets").json()
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(rows[0]["name"], "相同名称")
+            self.assertTrue(rows[0]["paused"])
+            self.assertEqual(rows[1]["id"], second["id"])
+            self.assertEqual(rows[1]["name"], "只改第二个")
+
+    def test_duplicate_creation_is_serialized_and_duplicate_edit_is_rejected(self):
+        with TestClient(main.app) as client, ThreadPoolExecutor() as pool:
+            before = Target.request_count
+            payload = {"name": "并发添加", "url": self.base}
+            responses = list(pool.map(lambda _: client.post("/api/targets", json=payload), range(2)))
+            self.assertEqual(sorted(r.status_code for r in responses), [201, 409])
+            rows = client.get("/api/targets").json()
+            self.assertEqual(len(rows), 2)
+            saved = rows[0]
+            conflict = client.put("/api/targets/1", json={"name": "不能覆盖", "url": self.base + "/"})
+            self.assertEqual(conflict.status_code, 409)
+            self.assertEqual(client.get("/api/targets/1").json(), saved)
+            invalid = client.post("/api/targets", json={"name": "无效", "url": "ftp://localhost/"})
+            self.assertEqual(invalid.status_code, 422)
+            self.assertEqual(len(client.get("/api/targets").json()), 2)
+            self.assertEqual(Target.request_count, before)
+
+    def test_missing_target_cannot_modify_or_check_first_target(self):
+        with TestClient(main.app) as client:
+            before_target = client.get("/api/targets/1").json()
+            before_requests = Target.request_count
+            for target_id in [999999, -1, 999999999999999999999999]:
+                path = f"/api/targets/{target_id}"
+                self.assertEqual(client.get(path).status_code, 404)
+                self.assertEqual(client.post(path + "/check").status_code, 404)
+                self.assertEqual(client.patch(path + "/state", json={"paused": True}).status_code, 404)
+                self.assertEqual(client.put(path, json={"name": "不存在", "url": self.base + "/"}).status_code, 404)
+            self.assertEqual(client.get("/api/targets/1").json(), before_target)
+            self.assertEqual(Target.request_count, before_requests)
+
+    def test_checking_one_target_does_not_block_another(self):
+        Target.held_entered.clear()
+        Target.held_release.clear()
+        with TestClient(main.app) as client, ThreadPoolExecutor() as pool:
+            self.save(client, self.base + "/held")
+            other = client.post("/api/targets", json={"name": "独立目标", "url": self.base + "/"}).json()
+            pending = pool.submit(client.post, "/api/targets/1/check")
+            try:
+                self.assertTrue(Target.held_entered.wait(2))
+                self.assertEqual(client.post("/api/targets/1/check").status_code, 409)
+                independent = client.post(f"/api/targets/{other['id']}/check")
+                self.assertEqual(independent.status_code, 200)
+                self.assertEqual(independent.json()["status"], "up")
+                self.assertFalse(pending.done())
+            finally:
+                Target.held_release.set()
+            self.assertEqual(pending.result(timeout=3).json()["status"], "up")
+
+    def test_existing_empty_table_stays_empty_until_user_adds_target(self):
+        database.initialize()
+        # 只删除该测试的临时数据库记录，验证初始化不会反复补入演示目标。
+        with closing(sqlite3.connect(database.DB_PATH)) as connection:
+            with connection:
+                connection.execute("DELETE FROM targets")
+        with TestClient(main.app) as client:
+            self.assertEqual(client.get("/api/targets").json(), [])
+            created = client.post("/api/targets", json={"name": "第一个", "url": self.base + "/"})
+            self.assertEqual(created.status_code, 201)
+            self.assertEqual(len(client.get("/api/targets").json()), 1)
 
 
 if __name__ == "__main__":

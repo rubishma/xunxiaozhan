@@ -1,4 +1,4 @@
-"""巡小站：保存一个目标，并手动检查它的 HTTP 响应。"""
+"""巡小站：管理多个目标，并手动检查它的 HTTP 响应。"""
 import asyncio
 import logging
 import sqlite3
@@ -48,7 +48,7 @@ class PauseInput(BaseModel):
 async def lifespan(app: FastAPI):
     # SQLite 操作放到工作线程，不在事件循环里等待磁盘。
     await asyncio.to_thread(database.initialize)
-    app.state.check_lock = asyncio.Lock()
+    app.state.target_locks = {}
     async with httpx.AsyncClient(
         follow_redirects=True, max_redirects=5, timeout=5, trust_env=False
     ) as client:
@@ -76,37 +76,64 @@ async def health():
     return {"status": "ok"}
 
 
-@app.get("/api/target")
-def read_target():
-    # 普通 def 接口由 FastAPI 在线程池运行。
-    return database.get_target()
+@app.exception_handler(database.TargetNotFound)
+async def missing_target(request: Request, exc: database.TargetNotFound):
+    return JSONResponse(status_code=404, content={"detail": "目标不存在，请刷新目标列表"})
 
 
-@app.put("/api/target")
-async def update_target(target: TargetInput):
-    if app.state.check_lock.locked():
-        raise HTTPException(status_code=409, detail="检查或保存正在执行，请稍后再试")
-    async with app.state.check_lock:
-        return await asyncio.to_thread(database.save_target, target.name, target.url)
+@app.exception_handler(database.DuplicateTarget)
+async def duplicate_target(request: Request, exc: database.DuplicateTarget):
+    return JSONResponse(status_code=409, content={"detail": "该网址已在目标列表中，请选择已有目标"})
 
 
-@app.patch("/api/target/state")
-async def update_pause(state: PauseInput):
-    # 与检查共用锁：正在执行的检查先完成，用户再暂停。
-    if app.state.check_lock.locked():
-        raise HTTPException(status_code=409, detail="检查或保存正在执行，请完成后再修改暂停状态")
-    async with app.state.check_lock:
-        return await asyncio.to_thread(database.set_paused, state.paused)
+@app.get("/api/targets")
+def read_targets():
+    return database.list_targets()
 
 
-@app.post("/api/check")
-async def check_target():
-    if app.state.check_lock.locked():
-        raise HTTPException(status_code=409, detail="检查或保存正在执行，请稍后再试")
+@app.post("/api/targets", status_code=201)
+def add_target(target: TargetInput):
+    # 保存配置不执行网站请求。
+    return database.create_target(target.name, target.url)
 
-    async with app.state.check_lock:
-        target = await asyncio.to_thread(database.get_target)
-        # 必须由后端拦截，不能只依赖页面把按钮变灰。
+
+@app.get("/api/targets/{target_id}")
+def read_target(target_id: int):
+    return database.get_target(target_id)
+
+
+async def lock_for(target_id):
+    # 先确认目标存在，避免给不存在的编号创建锁。
+    await asyncio.to_thread(database.get_target, target_id)
+    return app.state.target_locks.setdefault(target_id, asyncio.Lock())
+
+
+@app.put("/api/targets/{target_id}")
+async def update_target(target_id: int, target: TargetInput):
+    lock = await lock_for(target_id)
+    if lock.locked():
+        raise HTTPException(status_code=409, detail="该目标正在检查或保存，请稍后再试")
+    async with lock:
+        return await asyncio.to_thread(database.save_target, target_id, target.name, target.url)
+
+
+@app.patch("/api/targets/{target_id}/state")
+async def update_pause(target_id: int, state: PauseInput):
+    lock = await lock_for(target_id)
+    if lock.locked():
+        raise HTTPException(status_code=409, detail="该目标正在检查或保存，请完成后再修改暂停状态")
+    async with lock:
+        return await asyncio.to_thread(database.set_paused, target_id, state.paused)
+
+
+@app.post("/api/targets/{target_id}/check")
+async def check_target(target_id: int):
+    lock = await lock_for(target_id)
+    if lock.locked():
+        raise HTTPException(status_code=409, detail="该目标正在检查或保存，请稍后再试")
+
+    async with lock:
+        target = await asyncio.to_thread(database.get_target, target_id)
         if target["paused"]:
             raise HTTPException(status_code=409, detail="目标已暂停，请先恢复巡检")
         checked_at = datetime.now(timezone.utc).isoformat()
@@ -136,6 +163,7 @@ async def check_target():
             elapsed_ms = round((perf_counter() - started) * 1000, 1)
 
         return {
+            "target_id": target["id"],
             "target_name": target["name"],
             "target_url": target["url"],
             "status": "up" if error is None else "down",

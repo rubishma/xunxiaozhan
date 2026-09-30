@@ -24,7 +24,13 @@
     .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px; }
     dl { display: grid; grid-template-columns: 120px 1fr; gap: 12px; }
     dt { color: #526479; } dd { margin: 0; overflow-wrap: anywhere; }
-    #notice { color: #922c2c; }
+    #notice, #add-notice { color: #922c2c; }
+    #target-list { list-style: none; padding: 0; display: grid; gap: 10px; }
+    .target-row { display: grid; gap: 4px; text-align: left; width: 100%; background: #f7f9fc; color: #192c40; border: 1px solid #ccd8e5; overflow-wrap: anywhere; }
+    .target-row[aria-pressed="true"] { border: 2px solid #235bc1; background: #edf3ff; }
+    .target-row span { font-size: 14px; }
+    summary { cursor: pointer; font-weight: 600; }
+    #add { margin-top: 16px; }
     @media (max-width: 480px) {
       main { margin-top: 24px; } .card { padding: 18px; }
       dl { grid-template-columns: 1fr; gap: 4px; } dd { margin-bottom: 12px; }
@@ -35,10 +41,27 @@
 <body>
 <main>
   <header>
-    <p class="muted">学习版本 · 单目标配置与手动检查</p>
+    <p class="muted">学习版本 · 多目标列表与手动检查</p>
     <h1>巡小站</h1>
     <p class="muted">检查一次，读懂一次结果。</p>
   </header>
+  <section class="card" aria-labelledby="list-title">
+    <h2 id="list-title">目标列表 <small id="target-count"></small></h2>
+    <p class="muted">选择一个目标后，再编辑、暂停或检查。列表结果仅保留在本页，刷新后清空。</p>
+    <ul id="target-list"><li>正在读取目标列表…</li></ul>
+    <details>
+      <summary>添加目标</summary>
+      <form id="add-form">
+        <label for="add-name">新目标名称</label>
+        <input id="add-name" name="name" maxlength="80" required disabled placeholder="例如：本机404测试">
+        <label for="add-url">新目标 HTTP/HTTPS 网址</label>
+        <input id="add-url" name="url" type="url" maxlength="2048" required disabled placeholder="http://127.0.0.1:8765/missing-demo-page">
+        <p class="muted">添加仅保存配置，不会发起检查。相同网址不能重复添加。</p>
+        <button id="add" type="submit" disabled>添加目标</button>
+        <p id="add-notice" role="alert" hidden></p>
+      </form>
+    </details>
+  </section>
   <section class="card" aria-labelledby="target-title">
     <h2 id="target-title">目标配置</h2>
     <span id="mode" class="tag">读取状态中</span>
@@ -50,6 +73,7 @@
       <p id="url-help" class="muted">只填写你有权检查的网站；网址不能包含账号、密码或 # 片段。</p>
       <div class="actions">
         <button id="save" type="submit" disabled>保存配置</button>
+        <button id="cancel" type="button" disabled>取消修改</button>
         <button id="check" type="button" disabled>立即检查</button>
         <button id="pause" type="button" disabled>暂停巡检</button>
       </div>
@@ -76,47 +100,119 @@
   const nameInput = document.querySelector("#name");
   const urlInput = document.querySelector("#url");
   const saveButton = document.querySelector("#save");
+  const cancelButton = document.querySelector("#cancel");
   const checkButton = document.querySelector("#check");
   const pauseButton = document.querySelector("#pause");
   const mode = document.querySelector("#mode");
   const notice = document.querySelector("#notice");
   const hint = document.querySelector("#hint");
   const result = document.querySelector("#result");
+  const list = document.querySelector("#target-list");
+  const addForm = document.querySelector("#add-form");
+  const addName = document.querySelector("#add-name");
+  const addUrl = document.querySelector("#add-url");
+  const addButton = document.querySelector("#add");
+  const addNotice = document.querySelector("#add-notice");
+  let targets = [];
   let savedTarget = null;
   let busy = false;
+  let loaded = false;
+  // 暂存本页结果，按编号分开；刷新后清空，下一轮再写入数据库。
+  const results = new Map();
 
-  function syncButtons() {
-    const dirty = savedTarget && (
+  function isDirty() {
+    return savedTarget && (
       nameInput.value !== savedTarget.name || urlInput.value !== savedTarget.url
     );
+  }
+
+  function renderTargets() {
+    list.replaceChildren();
+    document.querySelector("#target-count").textContent = targets.length + " 个目标";
+    if (!targets.length) {
+      const item = document.createElement("li");
+      item.textContent = loaded ? "还没有目标，请在下方添加。" : "正在读取目标列表…";
+      list.append(item);
+      return;
+    }
+    for (const target of targets) {
+      const row = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "target-row";
+      button.setAttribute("aria-pressed", String(target.id === savedTarget?.id));
+      button.disabled = busy || Boolean(isDirty());
+      const title = document.createElement("strong");
+      title.textContent = "#" + target.id + " · " + target.name;
+      const url = document.createElement("span");
+      url.textContent = target.url;
+      const badge = document.createElement("span");
+      const cached = results.get(target.id);
+      badge.textContent = target.paused ? "已暂停" :
+        cached ? (cached.status === "up" ? "正常（本页结果）" : "异常（本页结果）") : "尚未检查（本页）";
+      button.append(title, url, badge);
+      button.addEventListener("click", () => selectTarget(target));
+      row.append(button);
+      list.append(row);
+    }
+  }
+
+  function syncButtons() {
+    const dirty = Boolean(isDirty());
     nameInput.disabled = urlInput.disabled = busy || !savedTarget;
     saveButton.disabled = busy || !savedTarget || !dirty;
+    cancelButton.disabled = busy || !savedTarget || !dirty;
     checkButton.disabled = busy || !savedTarget || dirty || savedTarget.paused;
     pauseButton.disabled = busy || !savedTarget || dirty;
-    if (savedTarget) {
-      mode.textContent = savedTarget.paused ? "已暂停" : "允许检查";
-      mode.className = savedTarget.paused ? "tag paused" : "tag";
-      pauseButton.textContent = savedTarget.paused ? "恢复巡检" : "暂停巡检";
-    }
-    if (!busy && savedTarget) {
-      hint.textContent = dirty ? "有未保存的修改，请先保存配置。" :
+    addName.disabled = addUrl.disabled = addButton.disabled = busy || !loaded || dirty;
+    mode.textContent = !savedTarget ? "未选择目标" : savedTarget.paused ? "已暂停" : "允许检查";
+    mode.className = savedTarget?.paused ? "tag paused" : "tag";
+    pauseButton.textContent = savedTarget?.paused ? "恢复巡检" : "暂停巡检";
+    document.querySelector("#target-title").textContent = savedTarget ?
+      "目标配置 · #" + savedTarget.id : "目标配置";
+    if (!busy && loaded) {
+      hint.textContent = !savedTarget ? "请先添加并选择目标。" :
+        dirty ? "有未保存的修改，请先保存或取消修改，再切换或添加目标。" :
         savedTarget.paused ? "已暂停，不会发起检查。下方若有结果，仅代表之前那一次检查。" :
         "当前配置已保存，可以检查。恢复巡检后请手动检查，确认目标状态。";
     }
+    renderTargets();
   }
 
-  function clearResult() {
-    document.querySelector("#status").textContent = "尚未检查";
-    document.querySelector("#status").className = "tag";
-    for (const id of ["checked-url", "code", "duration", "time"]) {
-      document.getElementById(id).textContent = "—";
-    }
-    document.querySelector("#error").textContent = "点击“立即检查”获取真实结果。";
+  function renderResult() {
+    const data = savedTarget && results.get(savedTarget.id);
+    document.querySelector("#result-title").textContent = savedTarget ?
+      "本页最近一次结果 · #" + savedTarget.id : "本页最近一次结果";
+    const status = document.querySelector("#status");
+    status.textContent = data ? (data.status === "up" ? "正常" : "异常") : "尚未检查";
+    status.className = data ? "tag " + data.status : "tag";
+    document.querySelector("#checked-url").textContent = data ? data.target_url : "—";
+    document.querySelector("#code").textContent = data ? (data.status_code ?? "未收到 HTTP 响应") : "—";
+    document.querySelector("#duration").textContent = data ? data.response_ms + " ms" : "—";
+    document.querySelector("#time").textContent = data ? new Intl.DateTimeFormat("zh-CN", {
+      timeZone: "Asia/Shanghai", dateStyle: "short", timeStyle: "medium", hour12: false
+    }).format(new Date(data.checked_at)) + "（北京时间）" : "—";
+    document.querySelector("#error").textContent = data ? (data.error || "无") : "尚未取得本页检查结果。";
   }
 
-  function showError(error) {
-    notice.textContent = error.message;
-    notice.hidden = false;
+  function selectTarget(target) {
+    savedTarget = target;
+    nameInput.value = target.name;
+    urlInput.value = target.url;
+    notice.hidden = true;
+    renderResult();
+    syncButtons();
+  }
+
+  function rememberTarget(target) {
+    const index = targets.findIndex(item => item.id === target.id);
+    if (index < 0) targets.push(target);
+    else targets[index] = target;
+  }
+
+  function showError(error, area = notice) {
+    area.textContent = error.message;
+    area.hidden = false;
   }
 
   async function api(path, options = {}) {
@@ -129,42 +225,68 @@
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
       if (Array.isArray(data.detail)) {
-        throw new Error("保存失败：请填写 1–80 字名称，以及有效的 HTTP/HTTPS 网址，不含账号、密码或 # 片段。");
+        throw new Error("输入无效：请填写 1–80 字名称，以及有效的 HTTP/HTTPS 网址，不含账号、密码或 # 片段。");
       }
       throw new Error(data.detail || "接口返回 HTTP " + response.status + "，请查看后端终端日志。");
     }
     return response.json();
   }
 
-  async function loadTarget() {
+  async function loadTargets() {
     try {
-      savedTarget = await api("/api/target");
-      nameInput.value = savedTarget.name;
-      urlInput.value = savedTarget.url;
+      targets = await api("/api/targets");
+      loaded = true;
+      if (targets.length) selectTarget(targets[0]);
+      else syncButtons();
     } catch (error) {
-      hint.textContent = "配置读取失败，恢复后端后请刷新页面。";
+      hint.textContent = "列表读取失败。代码更新后请重启 8000 后端，再刷新页面。";
       showError(error);
+      list.textContent = "目标列表暂时不可用，请刷新重试。";
     }
-    syncButtons();
   }
 
+  addForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (busy || addButton.disabled) return;
+    busy = true;
+    syncButtons();
+    addNotice.hidden = true;
+    addButton.textContent = "正在添加…";
+    try {
+      const target = await api("/api/targets", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: addName.value, url: addUrl.value })
+      });
+      rememberTarget(target);
+      addForm.reset();
+      selectTarget(target);
+    } catch (error) {
+      showError(error, addNotice);
+    } finally {
+      busy = false;
+      addButton.textContent = "添加目标";
+      syncButtons();
+    }
+  });
+
   form.addEventListener("input", syncButtons);
+  cancelButton.addEventListener("click", () => selectTarget(savedTarget));
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (busy || !savedTarget) return;
+    if (busy || saveButton.disabled) return;
     busy = true;
     syncButtons();
     notice.hidden = true;
     saveButton.textContent = "正在保存…";
-    hint.textContent = "正在把配置保存到后端…";
     try {
-      savedTarget = await api("/api/target", {
+      const target = await api("/api/targets/" + savedTarget.id, {
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: nameInput.value, url: urlInput.value })
       });
-      nameInput.value = savedTarget.name;
-      urlInput.value = savedTarget.url;
-      clearResult();
+      rememberTarget(target);
+      results.delete(target.id);
+      selectTarget(target);
     } catch (error) {
       showError(error);
     } finally {
@@ -182,10 +304,11 @@
     notice.hidden = true;
     hint.textContent = nextPaused ? "正在暂停巡检…" : "正在恢复巡检…";
     try {
-      savedTarget = await api("/api/target/state", {
+      savedTarget = await api("/api/targets/" + savedTarget.id + "/state", {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ paused: nextPaused })
       });
+      rememberTarget(savedTarget);
     } catch (error) {
       showError(error);
     } finally {
@@ -196,26 +319,20 @@
 
   checkButton.addEventListener("click", async () => {
     if (busy || checkButton.disabled) return;
+    const checkedId = savedTarget.id;
     busy = true;
     syncButtons();
     checkButton.textContent = "正在检查…";
-    hint.textContent = "正在检查后端已保存的目标…";
+    hint.textContent = "正在检查 #" + checkedId + "，请稍候…";
     result.setAttribute("aria-busy", "true");
     notice.hidden = true;
     try {
-      const data = await api("/api/check", { method: "POST" });
-      const status = document.querySelector("#status");
-      status.textContent = data.status === "up" ? "正常" : "异常";
-      status.className = "tag " + data.status;
-      document.querySelector("#checked-url").textContent = data.target_url;
-      document.querySelector("#code").textContent = data.status_code ?? "未收到 HTTP 响应";
-      document.querySelector("#duration").textContent = data.response_ms + " ms";
-      document.querySelector("#time").textContent = new Intl.DateTimeFormat("zh-CN", {
-        timeZone: "Asia/Shanghai", dateStyle: "short", timeStyle: "medium", hour12: false
-      }).format(new Date(data.checked_at)) + "（北京时间）";
-      document.querySelector("#error").textContent = data.error || "无";
+      const data = await api("/api/targets/" + checkedId + "/check", { method: "POST" });
+      if (data.target_id !== checkedId) throw new Error("结果编号与目标不一致，请刷新页面。");
+      results.set(checkedId, data);
+      renderResult();
     } catch (error) {
-      showError(new Error("本次未获取新结果，下面保留上次结果。" + error.message));
+      showError(new Error("本次未获取新结果，下面保留该目标上次结果。" + error.message));
     } finally {
       busy = false;
       checkButton.textContent = "立即检查";
@@ -224,7 +341,7 @@
     }
   });
 
-  loadTarget();
+  loadTargets();
 </script>
 </body>
 </html>
