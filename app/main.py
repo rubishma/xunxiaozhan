@@ -110,6 +110,11 @@ async def home():
     return FileResponse(Path(__file__).parent / "static" / "index.html")
 
 
+@app.get("/response-chart.js", include_in_schema=False)
+async def chart_script():
+    return FileResponse(Path(__file__).parent / "static" / "response-chart.js", media_type="application/javascript")
+
+
 @app.get("/api/health")
 async def health():
     # 只表示巡小站接口可响应，不代表目标网站或数据库健康。

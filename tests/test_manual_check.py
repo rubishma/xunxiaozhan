@@ -86,6 +86,9 @@ class ManualCheckTests(unittest.TestCase):
     def test_page_health_and_success(self):
         with TestClient(main.app) as client:
             self.assertIn("巡小站", client.get("/").text)
+            script = client.get("/response-chart.js")
+            self.assertEqual(script.status_code, 200)
+            self.assertIn("application/javascript", script.headers["content-type"])
             self.assertEqual(client.get("/api/health").json(), {"status": "ok"})
         data = self.inspect("/")
         self.assertEqual((data["status"], data["status_code"]), ("up", 200))

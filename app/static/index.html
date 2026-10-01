@@ -28,6 +28,15 @@
     .history-list { padding-left: 24px; }
     .history-list li { padding: 12px 0; border-bottom: 1px solid #dce4ed; overflow-wrap: anywhere; }
     .history-list p { margin: 4px 0; }
+    #response-chart { display: block; width: 100%; height: 260px; }
+    #response-chart[hidden] { display: none; }
+    .chart-axis { fill: #526479; font: 12px system-ui, sans-serif; }
+    .chart-point { cursor: pointer; outline: none; }
+    .chart-point:focus .point-symbol { stroke: #192c40; stroke-width: 3; }
+    #chart-detail { min-height: 52px; overflow-wrap: anywhere; }
+    .chart-legend { display: flex; gap: 20px; flex-wrap: wrap; }
+    .chart-legend .success { color: #235bc1; }
+    .chart-legend .failure { color: #a22d2d; }
     #history-notice, #incident-notice { color: #922c2c; }
     #notice, #add-notice { color: #922c2c; }
     #target-list { list-style: none; padding: 0; display: grid; gap: 10px; }
@@ -103,6 +112,15 @@
       <dt>错误原因</dt><dd id="error">点击“立即检查”获取真实结果。</dd>
     </dl>
   </section>
+  <section class="card" aria-labelledby="chart-title" id="chart-panel">
+    <h2 id="chart-title">近期检查耗时</h2>
+    <p class="muted">使用最近 20 条已保存记录，随“刷新历史与事件”更新。单位：毫秒。</p>
+    <div class="chart-legend"><span class="success">● 正常</span><span class="failure">◆ 异常</span></div>
+    <p id="chart-summary" role="status">请选择目标。</p>
+    <svg id="response-chart" role="group" aria-label="近期检查耗时图，数据点可用键盘选择" hidden></svg>
+    <p id="chart-detail" role="status" aria-live="polite"></p>
+    <p class="muted">失败点表示等到失败的耗时，不是网站正常响应速度。失败或网址变更处不连线，完整信息见下方历史。</p>
+  </section>
   <section class="card" aria-labelledby="history-title">
     <h2 id="history-title">近期检查历史</h2>
     <button id="refresh-history" type="button" disabled>刷新历史与事件</button>
@@ -121,6 +139,7 @@
   </section>
   <p class="muted">成功以最终 HTTP 200–299 为准，不代表网站所有业务都正常。</p>
 </main>
+<script src="/response-chart.js"></script>
 <script>
   const form = document.querySelector("#target-form");
   const nameInput = document.querySelector("#name");
@@ -271,6 +290,11 @@
       historyRows.length ? "目标 #" + savedTarget.id + " · 已加载 " + historyRows.length + " 条记录" :
       "该目标尚无保存的检查记录，请点击立即检查。";
     renderResult();
+    if (window.renderResponseChart) {
+      window.renderResponseChart(historyRows, historyState, savedTarget?.id);
+    } else {
+      document.querySelector("#chart-summary").textContent = "图表组件未加载，请重启新版后端后刷新页面。";
+    }
   }
 
   function renderIncidents() {

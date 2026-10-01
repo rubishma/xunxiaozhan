@@ -72,4 +72,4 @@ recovered_at 为首次正常检查的开始时间，恢复时 ended_at 同步设
 - 面试问题：为什么暂停监控不能算故障恢复？换网址后成功是否说明原网址已经恢复？
 - 本轮理解问题：连续检查失败 3 次，为什么应该有 3 条检查历史，却只有 1 次故障事件？
 
-启动方法及完整演练步骤见 README。本轮主要手工验收已完成，Git 提交由学习者执行，结果待确认。
+启动方法及完整演练步骤见 README。本轮主要手工验收已完成，学习者已提交 daa0d60（feat: merge consecutive failures into recoverable incidents），截图显示工作区干净。
