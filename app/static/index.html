@@ -28,7 +28,7 @@
     .history-list { padding-left: 24px; }
     .history-list li { padding: 12px 0; border-bottom: 1px solid #dce4ed; overflow-wrap: anywhere; }
     .history-list p { margin: 4px 0; }
-    #history-notice { color: #922c2c; }
+    #history-notice, #incident-notice { color: #922c2c; }
     #notice, #add-notice { color: #922c2c; }
     #target-list { list-style: none; padding: 0; display: grid; gap: 10px; }
     .target-row { display: grid; gap: 4px; text-align: left; width: 100%; background: #f7f9fc; color: #192c40; border: 1px solid #ccd8e5; overflow-wrap: anywhere; }
@@ -46,7 +46,7 @@
 <body>
 <main>
   <header>
-    <p class="muted">学习版本 · 定时巡检与检查历史</p>
+    <p class="muted">学习版本 · 定时巡检与故障事件</p>
     <h1>巡小站</h1>
     <p class="muted">检查一次，读懂一次结果。</p>
     <p id="scheduler-info" class="muted" role="status">正在读取定时巡检状态…</p>
@@ -88,7 +88,7 @@
     </form>
     <p id="hint" class="muted" role="status">正在读取已保存的配置…</p>
     <p id="notice" role="alert" hidden></p>
-    <p class="muted">配置和检查历史在重启后仍保留。请求总时限 10 秒；修改网址不会改写旧记录。</p>
+    <p class="muted">配置和检查历史在重启后仍保留。请求总时限 10 秒；修改网址不会改写旧记录，会将旧网址未恢复的事件标为“网址变更而结束”。</p>
   </section>
   <section class="card" aria-labelledby="result-title" aria-live="polite" aria-busy="false" id="result">
     <h2 id="result-title">最近保存的检查结果</h2>
@@ -105,12 +105,19 @@
   </section>
   <section class="card" aria-labelledby="history-title">
     <h2 id="history-title">近期检查历史</h2>
-    <button id="refresh-history" type="button" disabled>刷新历史</button>
+    <button id="refresh-history" type="button" disabled>刷新历史与事件</button>
     <p class="muted">刷新只读取已保存记录，不会发起网站检查。关闭浏览器后，后台仍会巡检。</p>
     <p class="muted">显示最近 20 条，最新记录在前；时间均为北京时间。更早记录仍保存在数据库。</p>
     <p id="history-summary" role="status">请选择目标。</p>
     <p id="history-notice" role="alert" hidden></p>
     <ol id="history-list" class="history-list"></ol>
+  </section>
+  <section class="card" aria-labelledby="incidents-title">
+    <h2 id="incidents-title">故障事件</h2>
+    <p class="muted">连续失败合并为一次事件，恢复后记录恢复时间。显示最近 20 次事件；时间表示检查发现的时间。</p>
+    <p id="incident-summary" role="status">请选择目标。</p>
+    <p id="incident-notice" role="alert" hidden></p>
+    <ol id="incident-list" class="history-list"></ol>
   </section>
   <p class="muted">成功以最终 HTTP 200–299 为准，不代表网站所有业务都正常。</p>
 </main>
@@ -142,6 +149,11 @@
   const historyList = document.querySelector("#history-list");
   const historySummary = document.querySelector("#history-summary");
   const historyNotice = document.querySelector("#history-notice");
+  const incidentList = document.querySelector("#incident-list");
+  const incidentSummary = document.querySelector("#incident-summary");
+  const incidentNotice = document.querySelector("#incident-notice");
+  let incidentRows = [];
+  let incidentState = "empty";
   let historyRows = [];
   let historyState = "empty";
   let historyRequest = 0;
@@ -261,29 +273,81 @@
     renderResult();
   }
 
+  function renderIncidents() {
+    incidentList.replaceChildren();
+    for (const row of incidentRows) {
+      const item = document.createElement("li");
+      const title = document.createElement("strong");
+      const state = row.end_reason === "recovered" ? "已恢复" :
+        row.end_reason === "url_changed" ? "已结束（网址变更，未确认恢复）" :
+        savedTarget?.paused ? "未恢复（巡检已暂停）" : "未恢复";
+      title.className = "tag " + (row.end_reason === "recovered" ? "up" : row.ended_at ? "paused" : "down");
+      title.textContent = "事件 #" + row.id + " · " + state;
+      const times = document.createElement("dl");
+      const fields = [
+        ["首次发现异常", formatTime(row.started_at)],
+        ["最近一次失败", formatTime(row.last_failed_at)],
+        ["首次发现恢复", row.recovered_at ? formatTime(row.recovered_at) : "尚未确认恢复"],
+        ["失败检查次数", row.failure_count],
+        ["首次失败原因", row.first_error || "未提供"],
+        ["最近失败原因", row.last_error || "未提供"]
+      ];
+      if (row.end_reason === "url_changed") fields.push(["事件结束时间", formatTime(row.ended_at)]);
+      for (const [label, value] of fields) {
+        const term = document.createElement("dt");
+        const detail = document.createElement("dd");
+        term.textContent = label;
+        detail.textContent = value;
+        times.append(term, detail);
+      }
+      const snapshot = document.createElement("p");
+      snapshot.className = "muted";
+      snapshot.textContent = "首次异常时配置：" + row.target_name + " · " + row.target_url;
+      item.append(title, times, snapshot);
+      incidentList.append(item);
+    }
+    incidentSummary.textContent = !savedTarget ? "请选择目标。" :
+      incidentState === "loading" ? "正在读取故障事件…" :
+      incidentState === "error" ? "事件读取失败，请刷新历史与事件重试。" :
+      incidentRows.length ? "目标 #" + savedTarget.id + " · 已加载 " + incidentRows.length + " 次事件" :
+      "该目标暂无故障事件。事件从本功能启用后的检查开始记录，不回填旧历史。";
+  }
+
   async function loadHistory(targetId) {
     const requestNumber = ++historyRequest;
     historyRows = [];
-    historyState = targetId ? "loading" : "empty";
-    historyNotice.hidden = true;
+    incidentRows = [];
+    historyState = incidentState = targetId ? "loading" : "empty";
+    historyNotice.hidden = incidentNotice.hidden = true;
     renderHistory();
+    renderIncidents();
     syncButtons();
     if (!targetId) return;
     results.delete(targetId);
     renderTargets();
-    try {
-      const rows = await api("/api/targets/" + targetId + "/history");
-      // 快速切换目标时，忽略较早发出的请求，防止 A 的响应盖住 B。
-      if (requestNumber !== historyRequest || savedTarget?.id !== targetId) return;
-      historyRows = rows;
+    const [history, incidents] = await Promise.allSettled([
+      api("/api/targets/" + targetId + "/history"),
+      api("/api/targets/" + targetId + "/incidents")
+    ]);
+    // 快速切换目标时，忽略较早发出的请求，防止 A 的响应盖住 B。
+    if (requestNumber !== historyRequest || savedTarget?.id !== targetId) return;
+    if (history.status === "fulfilled") {
+      historyRows = history.value;
       historyState = "loaded";
-      results.set(targetId, rows[0] ?? null);
-    } catch (error) {
-      if (requestNumber !== historyRequest || savedTarget?.id !== targetId) return;
+      results.set(targetId, historyRows[0] ?? null);
+    } else {
       historyState = "error";
-      showError(error, historyNotice);
+      showError(history.reason, historyNotice);
+    }
+    if (incidents.status === "fulfilled") {
+      incidentRows = incidents.value;
+      incidentState = "loaded";
+    } else {
+      incidentState = "error";
+      showError(incidents.reason, incidentNotice);
     }
     renderHistory();
+    renderIncidents();
     syncButtons();
   }
 
@@ -401,6 +465,7 @@
         body: JSON.stringify({ paused: nextPaused })
       });
       rememberTarget(savedTarget);
+      renderIncidents();
     } catch (error) {
       showError(error);
     } finally {
@@ -414,7 +479,7 @@
     const target = savedTarget;
     if (!window.confirm(
       "确定删除目标 #" + target.id + " · " + target.name + "？\n" + target.url +
-      "\n将永久删除该目标配置及全部检查历史，无法直接撤销。若只是暂时不检查，请选择暂停。"
+      "\n将永久删除该目标配置、全部检查历史和故障事件，无法直接撤销。若只是暂时不检查，请选择暂停。"
     )) return;
     busy = true;
     syncButtons();

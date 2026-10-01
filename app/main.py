@@ -155,6 +155,11 @@ def read_history(target_id: int):
     return database.list_checks(target_id)
 
 
+@app.get("/api/targets/{target_id}/incidents")
+def read_incidents(target_id: int):
+    return database.list_incidents(target_id)
+
+
 async def lock_for(target_id):
     # 先确认目标存在，避免给不存在的编号创建锁。
     await asyncio.to_thread(database.get_target, target_id)
