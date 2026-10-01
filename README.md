@@ -1,7 +1,7 @@
 # 巡小站
 
 AI 辅助开发的个人学习项目，用于练习 HTTP 服务部署、巡检与故障排查。
-当前进度：多目标管理、手动与定时检查、历史持久化、故障事件合并、恢复记录及近期检查耗时图。
+当前进度：多目标管理、手动与定时检查、历史持久化、故障事件合并、恢复记录、近期检查耗时图及本地备份恢复工具。
 
 ## 当前功能
 
@@ -20,6 +20,7 @@ AI 辅助开发的个人学习项目，用于练习 HTTP 服务部署、巡检�
 - 暂停保留未恢复事件；修改网址会将旧事件标为“网址变更而结束”，不算恢复。
 - 最近 20 条历史绘制检查耗时图，正常圆点、异常菱形；点击、悬停或键盘选点查看详情。
 - 图表按真实检查时间排列，失败或网址变更处断线，刷新图表不会发起网站检查。
+- 命令行备份完整 SQLite 数据库、只读校验，并恢复到新文件；拒绝覆盖已有文件。
 - 总时限 10 秒，最多跟随 5 次重定向，最终 200–299 为正常。
 - 只读取最终响应头；失败耗时表示等到失败的时间。
 - 验证 HTTPS 证书；HTTP 客户端不自动读取系统代理环境变量。
@@ -51,6 +52,8 @@ AI 辅助开发的个人学习项目，用于练习 HTTP 服务部署、巡检�
 - app/scheduler.py：计算下次执行时间，后台循环与停止处理。
 - app/process_lock.py：阻止多个进程同时使用同一运行数据库。
 - .env.example：检查间隔示例（不会自动加载，启动方法见下文）。
+- app/backup.py：SQLite 快照备份、完整性与结构校验、恢复到新文件。
+- tests/test_backup.py：临时数据库恢复、WAL、编号序列及拒绝覆盖测试。
 - app/database.py：SQLite 初始化、旧表增量升级、目标配置、检查历史及故障事件读写。
 - app/static/index.html：表单、状态展示、按钮逻辑，无外部前端依赖。
 - app/static/response-chart.js：把已有历史绘制为 SVG 图表，无外部图表依赖。
@@ -259,6 +262,31 @@ $env:XUN_CHECK_INTERVAL_SECONDS = '30'
 4. 停止 8000 后端则按钮无法获取新结果，与目标网站异常不同。
 5. /api/health 返回 ok 只说明巡小站接口可响应，不证明目标或数据库健康。
 
+## 数据库备份与恢复
+
+代码的 Git 提交不包含 data 中的运行数据。完整演练见 [备份与恢复](docs/stage-08-backup-restore.md)。
+
+~~~powershell
+& '.\.venv\Scripts\python.exe' -m app.backup backup
+~~~
+
+成功后打印 backups 下的文件路径和五项统计。用该路径校验并恢复到一个新文件：
+
+~~~powershell
+& '.\.venv\Scripts\python.exe' -m app.backup verify '备份文件完整路径'
+& '.\.venv\Scripts\python.exe' -m app.backup restore '备份文件完整路径' --output 'data/restore-practice.sqlite3'
+& '.\.venv\Scripts\python.exe' -m app.backup verify 'data/restore-practice.sqlite3'
+~~~
+
+将占位路径替换为实际路径；恢复文件已存在时应改用新文件名，工具不会覆盖。
+备份包含全部历史及故障事件，并保留名称、网址、暂停状态和编号序列。
+备份可在后端运行时执行，使用 SQLite 快照接口，避免遗漏 WAL 中的已提交记录。
+恢复副本与备份的 targets、checks、incidents、paused_targets、last_target_id 应一致。
+演练不切换应用数据库；真实替换应另行停止后端并保留当前数据，不能直接覆盖正在运行的数据库。
+旧快照不包含备份之后的变化，也会回滚编号分配；关闭旧页面后再使用恢复的服务。
+只恢复自己的可信备份，校验不提供真实性证明。同盘副本不能防硬盘损坏，长期备份应另存独立介质。
+本轮验证 Windows 本机磁盘，输出位置须支持硬链接；不支持覆盖恢复、自动保留策略或跨版本迁移。
+
 ## 验证
 
 ~~~powershell
@@ -306,7 +334,7 @@ node tests/test_response_chart.cjs
 - [定时巡检与重复执行保护](docs/stage-05-scheduler.md)
 - [故障事件与恢复记录](docs/stage-06-incidents.md)
 - [近期检查耗时图](docs/stage-07-response-chart.md)
+- [数据库备份与恢复](docs/stage-08-backup-restore.md)
 
-后续逐步增加备份恢复、
-Docker、明确标注模拟数据的静态演示页及求职展示材料。
+后续逐步增加 Docker、明确标注模拟数据的静态演示页及求职展示材料。
 不提交 .venv、运行数据库、密钥或私人日志。远程仓库与发布需另外授权。
