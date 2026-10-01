@@ -46,13 +46,14 @@
 <body>
 <main>
   <header>
-    <p class="muted">学习版本 · 多目标管理与检查历史</p>
+    <p class="muted">学习版本 · 定时巡检与检查历史</p>
     <h1>巡小站</h1>
     <p class="muted">检查一次，读懂一次结果。</p>
+    <p id="scheduler-info" class="muted" role="status">正在读取定时巡检状态…</p>
   </header>
   <section class="card" aria-labelledby="list-title">
     <h2 id="list-title">目标列表 <small id="target-count"></small></h2>
-    <p class="muted">选择一个目标后读取已保存结果，再编辑、暂停或检查。页面不会自动发起巡检。</p>
+    <p class="muted">选择一个目标后读取已保存结果，再编辑、暂停或检查。后台按间隔检查；页面不会自动刷新。</p>
     <p id="list-notice" role="status" hidden></p>
     <ul id="target-list"><li>正在读取目标列表…</li></ul>
     <details>
@@ -62,7 +63,7 @@
         <input id="add-name" name="name" maxlength="80" required disabled placeholder="例如：本机404测试">
         <label for="add-url">新目标 HTTP/HTTPS 网址</label>
         <input id="add-url" name="url" type="url" maxlength="2048" required disabled placeholder="http://127.0.0.1:8765/missing-demo-page">
-        <p class="muted">添加仅保存配置，不会发起检查。相同网址不能重复添加。</p>
+        <p class="muted">添加后等待一个间隔开始定时检查；也可立即手动检查。相同网址不能重复添加。</p>
         <button id="add" type="submit" disabled>添加目标</button>
         <p id="add-notice" role="alert" hidden></p>
       </form>
@@ -94,6 +95,7 @@
     <p id="result-note" class="muted">结果代表检查当时的情况，不代表当前仍然正常。</p>
     <span id="status" class="tag">未选择目标</span>
     <dl>
+      <dt>检查来源</dt><dd id="check-source">—</dd>
       <dt>实际检查网址</dt><dd id="checked-url">—</dd>
       <dt>HTTP 状态码</dt><dd id="code">—</dd>
       <dt>请求耗时</dt><dd id="duration">—</dd>
@@ -103,6 +105,8 @@
   </section>
   <section class="card" aria-labelledby="history-title">
     <h2 id="history-title">近期检查历史</h2>
+    <button id="refresh-history" type="button" disabled>刷新历史</button>
+    <p class="muted">刷新只读取已保存记录，不会发起网站检查。关闭浏览器后，后台仍会巡检。</p>
     <p class="muted">显示最近 20 条，最新记录在前；时间均为北京时间。更早记录仍保存在数据库。</p>
     <p id="history-summary" role="status">请选择目标。</p>
     <p id="history-notice" role="alert" hidden></p>
@@ -134,6 +138,7 @@
   let savedTarget = null;
   let busy = false;
   let loaded = false;
+  const refreshHistoryButton = document.querySelector("#refresh-history");
   const historyList = document.querySelector("#history-list");
   const historySummary = document.querySelector("#history-summary");
   const historyNotice = document.querySelector("#history-notice");
@@ -190,6 +195,7 @@
     checkButton.disabled = busy || !savedTarget || dirty || savedTarget.paused;
     pauseButton.disabled = busy || !savedTarget || dirty;
     deleteButton.disabled = busy || !savedTarget || dirty;
+    refreshHistoryButton.disabled = busy || !savedTarget || historyState === "loading";
     addName.disabled = addUrl.disabled = addButton.disabled = busy || !loaded || dirty;
     mode.textContent = !savedTarget ? "未选择目标" : savedTarget.paused ? "已暂停" : "允许检查";
     mode.className = savedTarget?.paused ? "tag paused" : "tag";
@@ -200,7 +206,7 @@
       hint.textContent = !savedTarget ? "请先添加并选择目标。" :
         dirty ? "有未保存的修改，请先保存或取消修改，再切换或添加目标。" :
         savedTarget.paused ? "已暂停，不会发起检查。下方若有结果，仅代表之前那一次检查。" :
-        "当前配置已保存，可以检查。恢复巡检后请手动检查，确认目标状态。";
+        "当前配置已保存，将按间隔定时检查；也可手动检查。";
     }
     renderTargets();
   }
@@ -217,6 +223,7 @@
       "注意：这是修改网址之前的记录，请核对实际检查网址；当前网址还需重新检查。" :
       "结果代表检查当时的情况，不代表当前仍然正常。暂停时仍可查看历史。";
     status.className = data ? "tag " + data.status : "tag";
+    document.querySelector("#check-source").textContent = data ? (data.source === "scheduled" ? "定时" : "手动") : "—";
     document.querySelector("#checked-url").textContent = data ? data.target_url : "—";
     document.querySelector("#code").textContent = data ? (data.status_code ?? "未收到 HTTP 响应") : "—";
     document.querySelector("#duration").textContent = data ? data.response_ms + " ms" : "—";
@@ -235,7 +242,8 @@
     for (const row of historyRows) {
       const item = document.createElement("li");
       const title = document.createElement("strong");
-      title.textContent = formatTime(row.checked_at) + " · " + (row.status === "up" ? "正常" : "异常");
+      title.textContent = formatTime(row.checked_at) + " · " + (row.status === "up" ? "正常" : "异常") +
+        " · " + (row.source === "scheduled" ? "定时" : "手动");
       const detail = document.createElement("p");
       detail.textContent = (row.status_code === null ? "未收到 HTTP 响应" : "HTTP " + row.status_code) +
         " · " + row.response_ms + " ms · " + (row.error || "无错误");
@@ -259,6 +267,7 @@
     historyState = targetId ? "loading" : "empty";
     historyNotice.hidden = true;
     renderHistory();
+    syncButtons();
     if (!targetId) return;
     results.delete(targetId);
     renderTargets();
@@ -275,7 +284,7 @@
       showError(error, historyNotice);
     }
     renderHistory();
-    renderTargets();
+    syncButtons();
   }
 
   function selectTarget(target) {
@@ -455,7 +464,24 @@
     }
   });
 
+  refreshHistoryButton.addEventListener("click", () => {
+    if (!refreshHistoryButton.disabled) loadHistory(savedTarget.id);
+  });
+
+  async function loadSchedulerStatus() {
+    const area = document.querySelector("#scheduler-info");
+    try {
+      const data = await api("/api/scheduler");
+      area.textContent = data.running ?
+        "定时巡检已开启：每次检查完成后至少等待 " + data.interval_seconds +
+        " 秒；暂停的目标跳过。点击刷新历史查看新记录。" : "定时巡检未运行，请查看后端终端日志。";
+    } catch (error) {
+      area.textContent = "定时巡检状态读取失败。" + error.message;
+    }
+  }
+
   loadTargets();
+  loadSchedulerStatus();
 </script>
 </body>
 </html>

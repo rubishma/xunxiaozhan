@@ -62,6 +62,9 @@ class ManualCheckTests(unittest.TestCase):
         cls.thread.join()
 
     def setUp(self):
+        interval_patch = patch.object(main, "get_check_interval", return_value=60)
+        interval_patch.start()
+        self.addCleanup(interval_patch.stop)
         folder = tempfile.TemporaryDirectory(prefix="xunxiaozhan-test-")
         self.addCleanup(folder.cleanup)
         db_patch = patch.object(database, "DB_PATH", Path(folder.name) / "data" / "test.sqlite3")

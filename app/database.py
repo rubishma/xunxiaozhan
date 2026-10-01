@@ -76,6 +76,12 @@ def initialize():
                     error TEXT
                 )
             """)
+            check_columns = {row[1] for row in connection.execute("PRAGMA table_info(checks)")}
+            if "source" not in check_columns:
+                connection.execute(
+                    "ALTER TABLE checks ADD COLUMN source TEXT NOT NULL DEFAULT 'manual' "
+                    "CHECK (source IN ('manual', 'scheduled'))"
+                )
             connection.execute("CREATE INDEX IF NOT EXISTS checks_target_recent ON checks(target_id, id DESC)")
 
 
@@ -168,8 +174,8 @@ def save_check(result):
         with connection:
             cursor = connection.execute("""
                 INSERT INTO checks
-                    (target_id, target_name, target_url, status, status_code, response_ms, checked_at, error)
-                VALUES (:target_id, :target_name, :target_url, :status, :status_code, :response_ms, :checked_at, :error)
+                    (target_id, target_name, target_url, status, status_code, response_ms, checked_at, error, source)
+                VALUES (:target_id, :target_name, :target_url, :status, :status_code, :response_ms, :checked_at, :error, :source)
             """, result)
             check_id = cursor.lastrowid
     return {"id": check_id, **result}
