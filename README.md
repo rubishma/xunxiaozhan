@@ -110,7 +110,7 @@ Compose 把本机 127.0.0.1:18080 映射到容器 8000，使用独立数据卷�
 [网络练习](docs/stage-11-container-network.md)，测试页面位于 examples/windows-site/index.html。
 
 [重建与数据保留练习](docs/stage-12-container-data.md) 使用普通 compose down 和 up，核对容器 ID 改变、原命名卷及记录保留。
-数据卷不代替备份；容器内 /app/backups 当前未挂载卷，备份导出将在后续演练。
+数据卷不代替备份；容器内 /app/backups 当前未挂载卷，需按[容器备份与导出练习](docs/stage-13-container-backup.md)生成快照、复制到 Windows，再验证恢复副本。
 
 ## 定时巡检配置与演练
 
@@ -354,6 +354,7 @@ node tests/test_response_chart.cjs
 - [在容器中运行巡小站](docs/stage-10-container-run.md)
 - [容器检查 Windows 测试网站](docs/stage-11-container-network.md)
 - [重建容器与数据保留](docs/stage-12-container-data.md)
+- [容器数据库备份、导出与恢复副本](docs/stage-13-container-backup.md)
 
 Docker Desktop、WSL2 和 Compose 已通过环境验收；新增本机容器运行配置，学习者验收进度见阶段文档。
 后续逐步练习容器网络、重建与数据保留、备份导出，再整理明确标注模拟数据的静态演示页及求职展示材料。
