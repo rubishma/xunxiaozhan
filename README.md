@@ -106,6 +106,9 @@ Compose 把本机 127.0.0.1:18080 映射到容器 8000，使用独立数据卷�
 容器中 127.0.0.1 指向容器自己，默认 8765 目标需要按文档改成练习地址。
 本轮不提供公网部署；数据卷保留不代替数据库备份，不执行 down -v。
 
+容器访问 Windows 测试服务使用 host.docker.internal；18765 练习网站启动、停止与恢复步骤见
+[网络练习](docs/stage-11-container-network.md)，测试页面位于 examples/windows-site/index.html。
+
 ## 定时巡检配置与演练
 
 默认间隔 60 秒，使用环境变量 XUN_CHECK_INTERVAL_SECONDS 设置 30–86400 的整数。
@@ -346,6 +349,7 @@ node tests/test_response_chart.cjs
 - [数据库备份与恢复](docs/stage-08-backup-restore.md)
 - [Docker 环境准备](docs/stage-09-docker-environment.md)
 - [在容器中运行巡小站](docs/stage-10-container-run.md)
+- [容器检查 Windows 测试网站](docs/stage-11-container-network.md)
 
 Docker Desktop、WSL2 和 Compose 已通过环境验收；新增本机容器运行配置，学习者验收进度见阶段文档。
 后续逐步练习容器网络、重建与数据保留、备份导出，再整理明确标注模拟数据的静态演示页及求职展示材料。
