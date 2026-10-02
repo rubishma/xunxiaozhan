@@ -66,7 +66,7 @@ AI 辅助开发的个人学习项目，用于练习 HTTP 服务部署、巡检�
 
 ## 环境与首次安装
 
-开发环境为 Windows、Python 3.13.15，其他操作系统尚未验证。
+开发环境为 Windows、Python 3.13.15；新增 Linux 容器运行方式，验证范围见第十阶段记录。
 SQLite 使用 Python 自带模块，无需安装数据库软件。已有环境可跳过安装：
 
 ~~~powershell
@@ -96,6 +96,15 @@ python -m venv .venv
 8765 是目标网站，8000 是巡小站；操作面板只使用 8000 地址。
 两个窗口都保持运行，Ctrl+C 停止对应服务。不使用多 worker 或热重载。
 代码更新后，停止并重启 8000 后端，再刷新页面。
+
+## Docker 本机运行
+
+新增 Dockerfile、compose.yaml 与 .dockerignore，步骤见 [容器运行练习](docs/stage-10-container-run.md)。
+Compose 把本机 127.0.0.1:18080 映射到容器 8000，使用独立数据卷，不导入 Windows 原数据库。
+容器内仍保持单进程及 60 秒检查间隔；停止使用 compose stop，启动使用 compose start。
+首次运行、代码更新使用 compose up -d --build。完整 PowerShell 路径与 PATH 设置见阶段文档。
+容器中 127.0.0.1 指向容器自己，默认 8765 目标需要按文档改成练习地址。
+本轮不提供公网部署；数据卷保留不代替数据库备份，不执行 down -v。
 
 ## 定时巡检配置与演练
 
@@ -335,6 +344,9 @@ node tests/test_response_chart.cjs
 - [故障事件与恢复记录](docs/stage-06-incidents.md)
 - [近期检查耗时图](docs/stage-07-response-chart.md)
 - [数据库备份与恢复](docs/stage-08-backup-restore.md)
+- [Docker 环境准备](docs/stage-09-docker-environment.md)
+- [在容器中运行巡小站](docs/stage-10-container-run.md)
 
-后续逐步增加 Docker、明确标注模拟数据的静态演示页及求职展示材料。
+Docker Desktop、WSL2 和 Compose 已通过环境验收；新增本机容器运行配置，学习者验收进度见阶段文档。
+后续逐步练习容器网络、重建与数据保留、备份导出，再整理明确标注模拟数据的静态演示页及求职展示材料。
 不提交 .venv、运行数据库、密钥或私人日志。远程仓库与发布需另外授权。

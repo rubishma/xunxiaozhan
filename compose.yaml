@@ -1,0 +1,23 @@
+name: xunxiaozhan
+
+services:
+  app:
+    image: xunxiaozhan:local
+    build: .
+    ports:
+      - "127.0.0.1:18080:8000"
+    environment:
+      XUN_CHECK_INTERVAL_SECONDS: "60"
+    volumes:
+      - xun-data:/app/data
+    stop_grace_period: 20s
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).close()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  xun-data:
