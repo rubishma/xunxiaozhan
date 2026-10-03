@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>巡小站 · 离线演示（模拟数据）</title>
+<style>
+:root{--ink:#19362f;--muted:#62756f;--line:#dce5df;--paper:#f3f5ef;--green:#12664e;--mint:#e0efe7;--red:#a63636;--rose:#fae8e6;--amber:#79541d}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.65 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}button,select{font:inherit}button{cursor:pointer}button:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid #c78028;outline-offset:4px}a{color:var(--green)}.wrap{max-width:1180px;margin:auto;padding:0 32px}.top{border-bottom:1px solid var(--line);background:#fff}.top-inner{min-height:78px;display:flex;align-items:center;justify-content:space-between;gap:20px}.brand{display:flex;align-items:center;gap:12px;font-weight:750;font-size:22px}.mark{width:36px;height:36px;border-radius:11px;background:var(--green);color:white;text-align:center;line-height:36px;font-size:21px}.eyebrow{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);font-weight:700}.tag{display:inline-flex;align-items:center;gap:6px;border-radius:30px;padding:5px 12px;font-size:12px;font-weight:650;background:#eef2ee;color:#4d625a}.tag-demo{background:#f6ead5;color:var(--amber)}.intro{padding:36px 0 24px;display:flex;align-items:end;justify-content:space-between;gap:24px}h1{font-size:clamp(28px,3vw,38px);line-height:1.3;letter-spacing:-1px;margin:8px 0 10px}h2{font-size:19px;margin:0}h3{font-size:15px;margin:0 0 6px}p{margin:8px 0}.muted{color:var(--muted)}.intro p{max-width:680px}.local{min-width:155px;text-align:right;font-size:12px;color:var(--muted)}.notice{border:1px solid #e4d6b9;background:#fffaf0;padding:12px 17px;border-radius:12px;margin-bottom:24px;font-size:13px;color:#6b5229}.layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:22px}.panel{background:#fff;border:1px solid var(--line);border-radius:16px;padding:24px;min-width:0}.sidebar{align-self:start;padding:20px 16px}.section-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:18px}.small{font-size:12px}.target{width:100%;border:1px solid transparent;background:transparent;border-radius:12px;padding:15px 13px;text-align:left;color:var(--ink);display:block;margin-bottom:9px}.target[aria-pressed=true]{background:var(--mint);border-color:#9fc8b7}.target-name{display:block;font-weight:700;margin:6px 0}.target-id{color:var(--muted);font-size:12px}.target-sub{display:block;font-size:12px;color:var(--muted)}.side-note{border-top:1px solid var(--line);padding:15px 10px 0;margin-top:16px;color:var(--muted);font-size:12px}.main{display:grid;gap:20px;min-width:0}.summary-top{display:flex;justify-content:space-between;align-items:center;gap:16px}.url{font-family:ui-monospace,Consolas,monospace;font-size:12px;overflow-wrap:anywhere;color:var(--muted);margin-top:8px}.up{color:var(--green);background:var(--mint)}.down{color:var(--red);background:var(--rose)}.paused{color:#6a5d3f;background:#f4efdf}.facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:23px;padding-top:20px;border-top:1px solid var(--line)}.fact-label{font-size:12px;color:var(--muted)}.fact-value{font-size:26px;line-height:1.3;margin-top:5px;font-weight:650;letter-spacing:-.5px}.fact-value.compact{font-size:20px}.unit{font-size:13px;font-weight:400;color:var(--muted);margin-left:4px}.legend{font-size:12px;display:flex;gap:16px;flex-wrap:wrap}.legend-up{color:var(--green)}.legend-down{color:var(--red)}#chart{display:block;width:100%;height:auto;margin-top:8px;overflow:visible}.chart-point{cursor:pointer}.chart-point:focus{outline:none}.chart-point:focus .focus-ring{stroke:#c78028;stroke-width:3}.focus-ring{fill:transparent;stroke:transparent}.point-detail{font-size:13px;border-radius:10px;background:#f3f6f3;padding:13px 15px;min-height:52px;border-left:3px solid var(--green)}.point-detail[data-failed=true]{border-color:var(--red)}.chart-note{color:var(--muted);font-size:12px;margin-top:12px}.incident{background:#f7faf7;border:1px solid var(--line);border-radius:12px;padding:18px}.incident-head{display:flex;justify-content:space-between;gap:12px;align-items:center}.incident-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:15px;margin:18px 0 10px}.step{border-left:2px solid #b8cec0;padding-left:12px}.step strong{display:block;font-size:17px}.step small{color:var(--muted);font-size:12px}.explain{font-size:13px;color:var(--muted);margin-top:12px}.history{list-style:none;padding:0;margin:0}.history li+li{border-top:1px solid var(--line)}.history-button{width:100%;border:0;background:transparent;padding:13px 0;color:var(--ink);display:flex;align-items:center;justify-content:space-between;text-align:left;gap:12px}.history-button:hover{background:#f7faf7}.history-button[aria-pressed=true]{background:#edf5ef}.history-time{font-variant-numeric:tabular-nums;font-size:13px}.history-result{font-size:13px;text-align:right}.history-result b{display:block}.two-col{display:grid;grid-template-columns:1fr 1fr;gap:20px}.foot{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin:28px 0 22px}.foot article{padding:18px 0;border-top:2px solid #bbcec0}.foot p{font-size:13px;color:var(--muted)}footer{border-top:1px solid var(--line);padding:18px 0 26px;font-size:12px;color:var(--muted)}.footer-inner{display:flex;justify-content:space-between;gap:15px;flex-wrap:wrap}noscript{display:block;padding:20px;background:#fff0d8}
+@media(max-width:780px){.wrap{padding:0 18px}.intro{display:block;padding-top:25px}.local{display:none}.layout{grid-template-columns:1fr}.sidebar{padding:18px}.targets{display:grid;grid-template-columns:1fr 1fr;gap:8px}.target{margin-bottom:0}.side-note{margin-top:12px;padding-top:12px}.two-col{grid-template-columns:1fr}.panel{padding:20px}.foot{grid-template-columns:1fr;gap:0}.top-inner{gap:12px}.brand{font-size:20px}.summary-top{align-items:flex-start}.facts{gap:9px}.fact-value{font-size:23px}.fact-value.compact{font-size:17px}.incident-steps{gap:8px}.step strong{font-size:15px}.section-head{align-items:flex-start;flex-wrap:wrap}.notice{font-size:12px}}
+@media(prefers-reduced-motion:no-preference){button{transition:background .15s,border-color .15s}}
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap top-inner"><div class="brand"><span class="mark" aria-hidden="true">巡</span>巡小站<span class="eyebrow"> / LAB</span></div><span class="tag tag-demo">离线演示 · 模拟数据</span></div></header>
+<main class="wrap">
+<div class="intro"><div><div class="eyebrow">HTTP INSPECTION / LEARNING PROJECT</div><h1>一次故障，留下完整记录。</h1><p class="muted">从单次检查到故障恢复，理解一个小型巡检系统如何工作。</p></div><div class="local">Python · FastAPI · SQLite<br>个人学习项目 / AI 辅助开发</div></div>
+<div class="notice" role="note"><strong>这是展示用样例。</strong> 全部时间、网址、耗时与事件均为模拟数据。页面不连接后端，不发起网站检查，不保存修改；实际应用界面见项目源码。</div>
+<noscript>本演示页需要启用 JavaScript 才能切换样例和查看数据点详情。它不需要联网。</noscript>
+<div class="layout">
+<aside class="panel sidebar" aria-label="样例目标"><div class="section-head"><h2>样例目标</h2><span class="tag">2</span></div><div class="targets">
+<button type="button" class="target" data-target="1" aria-pressed="true"><span class="target-id">目标 #1</span><span class="target-name">练习网站 A</span><span class="target-sub">连续失败后恢复</span></button>
+<button type="button" class="target" data-target="2" aria-pressed="false"><span class="target-id">目标 #2</span><span class="target-name">练习网站 B</span><span class="target-sub">暂停 · 保留旧结果</span></button>
+</div><div class="side-note">点击目标切换固定样例。<br>实际应用按编号区分目标，名称可以重复。</div></aside>
+<div class="main">
+<section class="panel" aria-labelledby="result-heading"><div class="summary-top"><div><div class="eyebrow">LAST SAVED CHECK / SAMPLE</div><h2 id="result-heading">最近保存的检查结果 · #1</h2></div><span id="latest-status" class="tag up"></span></div><div class="url" id="target-url"></div><div class="facts"><div><div class="fact-label">检查结果</div><div class="fact-value compact" id="http-code"></div></div><div><div class="fact-label">检查耗时</div><div class="fact-value"><span id="duration"></span><span class="unit">ms</span></div></div><div><div class="fact-label">样例巡检状态</div><div class="fact-value compact" id="monitor-state"></div></div></div><p class="explain" id="latest-note"></p></section>
+<section class="panel" aria-labelledby="chart-heading"><div class="section-head"><div><h2 id="chart-heading">检查耗时</h2><div class="small muted">模拟日期 2026-10-02 · 北京时间</div></div><div class="legend"><span class="legend-up">● 正常</span><span class="legend-down">◆ 异常</span></div></div>
+<svg id="chart" viewBox="0 0 700 220" role="group" aria-label="模拟检查耗时图，数据点可用 Tab 选择"></svg>
+<div id="point-detail" class="point-detail" role="status" aria-live="polite"></div><p class="chart-note">点击或用 Tab 选点查看详情。失败耗时是等到失败的时间；相邻失败点不连线，也不当成网站正常响应速度。</p></section>
+<div class="two-col"><section class="panel" aria-labelledby="incident-heading"><div class="section-head"><h2 id="incident-heading">故障事件</h2><span class="small muted">模拟事件</span></div><div id="incident-content"></div></section>
+<section class="panel" aria-labelledby="history-heading"><div class="section-head"><h2 id="history-heading">检查历史</h2><span id="history-count" class="small muted"></span></div><ul class="history" id="history"></ul></section></div>
+</div></div>
+<section class="foot" aria-label="项目实现要点"><article><div class="eyebrow">01 / INCIDENTS</div><h3>逐次留历史，连续失败合并</h3><p>每次检查一条历史；同一目标连续失败计入同一事件，恢复后记录首次发现恢复的时间。</p></article><article><div class="eyebrow">02 / PERSISTENCE</div><h3>容器可重建，数据卷保留</h3><p>实际应用的 SQLite 存入命名数据卷。暂停状态、目标编号、历史与事件都由数据库保存。</p></article><article><div class="eyebrow">03 / RECOVERY</div><h3>快照、导出、恢复再核对</h3><p>通过 SQLite 快照备份，导出到 Windows；恢复到新文件后独立校验。数据卷本身不等于备份。</p></article></section>
+</main>
+<footer><div class="wrap footer-inner"><span>巡小站 · 固定样例展示 / 非实时监控</span><span>源码与真实验收边界见 README 和阶段记录</span></div></footer>
+<script>
+'use strict';
+// Fixed fictional examples only. No fetch, sockets, storage or timers.
+const samples = {
+  1: { name:'练习网站 A', url:'http://practice-a.invalid/', paused:false, rows:[
+    {time:'14:00:00',ms:24,ok:true}, {time:'14:01:00',ms:2020,ok:false},
+    {time:'14:02:00',ms:2040,ok:false}, {time:'14:03:00',ms:31,ok:true}, {time:'14:04:00',ms:27,ok:true}
+  ], incident:{id:1,start:'14:01:00',last:'14:02:00',recovery:'14:03:00',failures:2}},
+  2: { name:'练习网站 B', url:'http://practice-b.invalid/', paused:true, rows:[
+    {time:'14:00:00',ms:18,ok:true}, {time:'14:01:00',ms:1500,ok:false}
+  ], incident:{id:2,start:'14:01:00',last:'14:01:00',recovery:null,failures:1}}
+};
+const ns='http://www.w3.org/2000/svg';
+let selectedTarget=1, selectedIndex=0;
+const el=id=>document.getElementById(id);
+function svgNode(tag,attrs,text){const n=document.createElementNS(ns,tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,String(v));if(text!==undefined)n.textContent=text;return n;}
+function selectPoint(index){
+  selectedIndex=index;
+  const sample=samples[selectedTarget], row=sample.rows[index];
+  el('point-detail').textContent=`${row.time}（北京） · ${row.ok?'正常 · HTTP 200':'异常 · 未收到 HTTP 响应'} · ${row.ms} ms · 手动（模拟）${row.ok?'':' · 模拟连接失败'}`;
+  el('point-detail').dataset.failed=String(!row.ok);
+  document.querySelectorAll('[data-index]').forEach(node=>node.setAttribute('aria-pressed',String(Number(node.dataset.index)===index)));
+}
+function drawChart(rows){
+  const svg=el('chart');svg.replaceChildren();
+  const width=Math.max(260,Math.round(svg.getBoundingClientRect().width));
+  svg.setAttribute('viewBox','0 0 '+width+' 220');
+  const x=i=>52+(i/(rows.length-1))*(width-72), y=ms=>172-ms/2400*140;
+  for(const value of [0,1200,2400]){
+    svg.append(svgNode('line',{x1:52,x2:width-20,y1:y(value),y2:y(value),stroke:'#dce5df'}));
+    svg.append(svgNode('text',{x:42,y:y(value)+4,'text-anchor':'end',fill:'#62756f','font-size':12},value.toLocaleString('en-US')));
+  }
+  svg.append(svgNode('text',{x:52,y:17,fill:'#62756f','font-size':12},'耗时 ms（模拟）'));
+  rows.forEach((row,i)=>{
+    if(i>0&&row.ok&&rows[i-1].ok)svg.append(svgNode('line',{class:'chart-segment',x1:x(i-1),x2:x(i),y1:y(rows[i-1].ms),y2:y(row.ms),stroke:'#12664e','stroke-width':2}));
+    const point=svgNode('g',{class:'chart-point',tabindex:0,role:'button','data-index':i,'aria-pressed':'false','aria-label':`${row.time}，${row.ok?'正常':'异常'}，${row.ms} 毫秒（模拟）`});
+    point.append(svgNode('circle',{class:'focus-ring',cx:x(i),cy:y(row.ms),r:13}));
+    point.append(row.ok?svgNode('circle',{cx:x(i),cy:y(row.ms),r:6,fill:'#12664e'}):svgNode('path',{d:`M ${x(i)} ${y(row.ms)-8} l 8 8 -8 8 -8 -8 Z`,fill:'#a63636'}));
+    point.addEventListener('click',()=>selectPoint(i));point.addEventListener('focus',()=>selectPoint(i));
+    point.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();selectPoint(i);}});
+    svg.append(point);
+  });
+  for(const i of [0,rows.length-1])svg.append(svgNode('text',{x:x(i),y:201,'text-anchor':i?'end':'start',fill:'#62756f','font-size':12},rows[i].time));
+}
+function render(id){
+  selectedTarget=id;const s=samples[id],last=s.rows.at(-1),event=s.incident;
+  document.querySelectorAll('[data-target]').forEach(b=>b.setAttribute('aria-pressed',String(Number(b.dataset.target)===id)));
+  el('result-heading').textContent=`最近保存的检查结果 · #${id}`;
+  el('target-url').textContent=`${s.name} · ${s.url}（虚构地址）`;
+  el('latest-status').textContent=last.ok?'上次检查正常':'上次检查异常';el('latest-status').className='tag '+(last.ok?'up':'down');
+  el('http-code').textContent=last.ok?'HTTP 200':'未收到响应';el('duration').textContent=last.ms;
+  el('monitor-state').textContent=s.paused?'已暂停':'允许检查';
+  el('latest-note').textContent=s.paused?`样例于 ${last.time} 后暂停，旧结果仍保留。暂停期间没有新采样，当前网站状态未知。`:`最近样例时间 ${last.time}。结果只代表检查当时，不代表网站现在仍然正常。`;
+  drawChart(s.rows);
+  const box=el('incident-content');box.replaceChildren();
+  const card=document.createElement('div');card.className='incident';
+  const head=document.createElement('div');head.className='incident-head';
+  const title=document.createElement('strong');title.textContent=`事件 #${event.id}`;
+  const badge=document.createElement('span');badge.className='tag '+(event.recovery?'up':'down');badge.textContent=event.recovery?'已恢复':'未确认恢复';head.append(title,badge);card.append(head);
+  const steps=document.createElement('div');steps.className='incident-steps';
+  for(const [label,value] of [['首次异常',event.start],['最近失败',event.last],['发现恢复',event.recovery||'尚未确认']]){
+    const step=document.createElement('div');step.className='step';const small=document.createElement('small');small.textContent=label;const strong=document.createElement('strong');strong.textContent=value;step.append(small,strong);steps.append(step);
+  }
+  card.append(steps);const note=document.createElement('p');note.className='explain';note.textContent=`${event.failures} 次连续失败合并为 1 次事件。${s.paused?'暂停不等于恢复，事件继续保留。':'首次正常检查结束该事件。'}时间表示检查发现时刻。`;card.append(note);box.append(card);
+  const history=el('history');history.replaceChildren();el('history-count').textContent=`${s.rows.length} 条模拟记录`;
+  [...s.rows].reverse().forEach((row,reverseIndex)=>{
+    const i=s.rows.length-1-reverseIndex,li=document.createElement('li'),button=document.createElement('button');button.type='button';button.className='history-button';button.dataset.index=i;button.setAttribute('aria-pressed','false');
+    const time=document.createElement('span');time.className='history-time';time.textContent=row.time;
+    const result=document.createElement('span');result.className='history-result';const status=document.createElement('b');status.textContent=row.ok?'正常 · HTTP 200':'异常 · 连接失败';status.style.color=row.ok?'#12664e':'#a63636';const ms=document.createElement('span');ms.className='muted';ms.textContent=`${row.ms} ms · 手动`;result.append(status,ms);button.append(time,result);button.addEventListener('click',()=>selectPoint(i));li.append(button);history.append(li);
+  });
+  selectPoint(s.rows.length-1);
+}
+document.querySelectorAll('[data-target]').forEach(button=>button.addEventListener('click',()=>render(Number(button.dataset.target))));
+render(1);
+let chartWidth=el('chart').getBoundingClientRect().width;
+new ResizeObserver(()=>{
+  const next=el('chart').getBoundingClientRect().width;
+  if(Math.abs(next-chartWidth)<1)return;
+  chartWidth=next;
+  const active=document.activeElement;
+  const focusIndex=active&&active.classList.contains('chart-point')?Number(active.dataset.index):null;
+  drawChart(samples[selectedTarget].rows);selectPoint(selectedIndex);
+  if(focusIndex!==null)el('chart').querySelector(`[data-index="${focusIndex}"]`).focus();
+}).observe(el('chart'));
+</script>
+</body>
+</html>
